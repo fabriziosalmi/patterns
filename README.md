@@ -72,6 +72,13 @@ patterns/
 
 ## ⚙️ Installation  
 
+### Prerequisites
+
+Before installing, ensure you have the following:
+- **Python 3.11 or higher** (the project uses Python 3.11 as specified in the GitHub Actions workflow)
+- **pip** (Python package installer)
+- **git** (for cloning the repository)
+
 ### Option 1: Download Pre-Generated Configurations  
 You can download the latest pre-generated WAF configurations directly from the [GitHub Releases](https://github.com/fabriziosalmi/patterns/releases) page.  
 
