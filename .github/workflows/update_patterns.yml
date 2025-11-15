@@ -54,13 +54,8 @@ jobs:
     - name: 🔄 Convert OWASP to HAProxy WAF
       run: python json2haproxy.py
 
-    - name: 🔄 Generate Bad Bot Blockers (Placeholder - Provide badbots.py)
-      run: |
-        # Placeholder:  Replace this with your actual badbots.py script.
-        # Assuming badbots.py generates files in waf_patterns/
-        # Example (if badbots.py creates nginx/bots.conf):
-        # python badbots.py
-        echo "Placeholder for badbots.py execution"
+    - name: 🔄 Generate Bad Bot Blockers
+      run: python badbots.py
 
     - name: 🚀 Commit and Push Changes (if any)
       run: |
@@ -98,6 +93,7 @@ jobs:
 
 
     - name: 🚀 Create GitHub Release (if previous steps succeeded)
+      id: create_release
       if: success()  # Only create release if previous steps were successful
       uses: actions/create-release@v1
       env:
