@@ -36,14 +36,15 @@ patterns/
 │   ├── apache/             # Apache WAF configs (ModSecurity)
 │   ├── traefik/            # Traefik WAF configs
 │   └── haproxy/            # HAProxy WAF configs
-│── import_apache_waf.py
-│── import_haproxy_waf.py
-│── import_nginx_waf.py
-│── import_traefik_waf.py
-├── owasp.py                # 🕵️ OWASP scraper (fetch CRS rules)
-├── owasp2nginx.py          # 🔄 Convert OWASP JSON to Nginx WAF configs
-├── owasp2apache.py         # 🔄 Convert OWASP JSON to Apache ModSecurity configs
-├── owasp2haproxy.py        # 🔄 Convert OWASP JSON to HAProxy WAF configs
+├── import_apache_waf.py    # 📥 Import Apache WAF configurations
+├── import_haproxy_waf.py   # 📥 Import HAProxy WAF configurations
+├── import_nginx_waf.py     # 📥 Import Nginx WAF configurations
+├── import_traefik_waf.py   # 📥 Import Traefik WAF configurations
+├── owasp2json.py           # 🕵️ OWASP scraper (fetch CRS rules)
+├── json2nginx.py           # 🔄 Convert OWASP JSON to Nginx WAF configs
+├── json2apache.py          # 🔄 Convert OWASP JSON to Apache ModSecurity configs
+├── json2traefik.py         # 🔄 Convert OWASP JSON to Traefik WAF configs
+├── json2haproxy.py         # 🔄 Convert OWASP JSON to HAProxy WAF configs
 ├── badbots.py              # 🤖 Generate WAF configs to block bad bots
 ├── requirements.txt        # 📄 Required dependencies
 └── .github/workflows/      # 🤖 GitHub Actions for automation
@@ -54,14 +55,14 @@ patterns/
 
 ## 🛠️ How It Works  
 ### 🔹 1. Scraping OWASP Rules  
-- **`owasp.py`** scrapes the latest OWASP CRS patterns from GitHub.  
+- **`owasp2json.py`** scrapes the latest OWASP CRS patterns from GitHub.  
 - Extracts **SQLi, XSS, RCE, LFI** patterns from OWASP CRS `.conf` files.  
 
 ### 🔹 2. Generating WAF Configs for Each Platform  
-- **`owasp2nginx.py`** – Generates **Nginx WAF** configurations.  
-- **`owasp2apache.py`** – Outputs **Apache ModSecurity** rules.  
-- **`owasp2traefik.py`** – Creates **Traefik WAF** rules.  
-- **`owasp2haproxy.py`** – Builds **HAProxy ACL** files.  
+- **`json2nginx.py`** – Generates **Nginx WAF** configurations.  
+- **`json2apache.py`** – Outputs **Apache ModSecurity** rules.  
+- **`json2traefik.py`** – Creates **Traefik WAF** rules.  
+- **`json2haproxy.py`** – Builds **HAProxy ACL** files.  
 
 ### 🔹 3. Bad Bot/User-Agent Detection  
 - **`badbots.py`** fetches public bot lists and generates bot-blocking configs.  
@@ -94,11 +95,11 @@ pip install -r requirements.txt
 
 **3. Run Manually (Optional):**  
 ```bash
-python owasp.py
-python owasp2nginx.py
-python owasp2apache.py
-python owasp2haproxy.py
-python owasp2traefik.py
+python owasp2json.py
+python json2nginx.py
+python json2apache.py
+python json2haproxy.py
+python json2traefik.py
 python badbots.py
 ```
 
@@ -169,9 +170,9 @@ See the [LICENSE](LICENSE) file for details.
 
 ---
 
-## Others projects
+## Other Projects
 
-If You like my projects, you may also like these ones:
+If you like this project, you may also like these:
 
 - [caddy-waf](https://github.com/fabriziosalmi/caddy-waf) Caddy WAF (Regex Rules, IP and DNS filtering, Rate Limiting, GeoIP, Tor, Anomaly Detection) 
 - [blacklists](https://github.com/fabriziosalmi/blacklists) Hourly updated domains blacklist 🚫 
