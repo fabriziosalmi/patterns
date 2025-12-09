@@ -29,20 +29,18 @@ jobs:
       run: |
         unzip nginx_waf.zip -d waf_rules
         echo "Extracted WAF rules into waf_rules directory"
-        ls -lh waf_rules/waf_patterns/nginx/
+        ls -lh waf_rules/
 
     - name: Verify WAF rules extraction
       run: |
-        if [ ! -d "waf_rules/waf_patterns/nginx" ]; then
-          echo "Error: WAF rules directory not found after extraction!"
+        if [ -z "$(ls -A waf_rules/*.conf 2>/dev/null)" ]; then
+          echo "Error: No .conf files found in waf_rules/"
+          echo "Contents of waf_rules/:"
+          ls -l waf_rules/
           exit 1
         fi
-        if [ -z "$(ls -A waf_rules/waf_patterns/nginx/*.conf 2>/dev/null)" ]; then
-          echo "Error: No .conf files found in waf_rules/waf_patterns/nginx/"
-          echo "Contents of waf_rules/waf_patterns/nginx/:"
-          ls -l waf_rules/waf_patterns/nginx/
-          exit 1
-        fi
+        echo "Found WAF configuration files:"
+        ls -l waf_rules/*.conf
 
     - name: Set up Python
       uses: actions/setup-python@v4
@@ -56,7 +54,7 @@ jobs:
 
     - name: Validate individual WAF rule files
       run: |
-        for file in waf_rules/waf_patterns/nginx/*.conf; do
+        for file in waf_rules/*.conf; do
           echo "Validating $file..."
           # Use crossplane to parse and validate the file
           if ! crossplane parse "$file" > /dev/null; then
@@ -71,7 +69,7 @@ jobs:
       run: |
         echo "Merging all WAF rules into a single file..."
         echo "http {" > merged_waf_rules.conf
-        for file in waf_rules/waf_patterns/nginx/*.conf; do
+        for file in waf_rules/*.conf; do
           echo "Merging $file..."
           cat "$file" >> merged_waf_rules.conf
           echo "" >> merged_waf_rules.conf
@@ -91,3 +89,4 @@ jobs:
           exit 1
         fi
         echo "Validation successful for merged_waf_rules.conf"
+
