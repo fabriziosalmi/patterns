@@ -81,7 +81,6 @@ jobs:
 
     - name: 🗑️ Delete Existing 'latest' Tag and Release (if they exist)
       run: |
-        gh auth login --with-token <<< "$GITHUB_TOKEN"
         # Delete local tag
         git tag -d latest || true
         # Delete remote tag (force)
@@ -89,7 +88,7 @@ jobs:
         # Delete release, --yes for confirmation
         gh release delete latest --yes || true
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 
     - name: 🚀 Create GitHub Release (if previous steps succeeded)
