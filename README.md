@@ -195,7 +195,7 @@ The default list blocks SEO crawlers, AI training bots, and known scanners while
 | [`test_apache_docker.yml`](.github/workflows/test_apache_docker.yml) | On PR | Validate generated Apache rules against ModSecurity in Docker |
 | [`docs.yml`](.github/workflows/docs.yml) | On `docs/` change | Build and deploy the VitePress docs to GitHub Pages |
 
-All workflows target the **`runner-02`** self-hosted runner by default, with an automatic fallback to GitHub-hosted runners by setting the repository variable `RUNS_ON` to `'["ubuntu-latest"]'`.
+All workflows run on **GitHub-hosted runners** (`ubuntu-latest`).
 
 ## Documentation
 

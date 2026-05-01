@@ -13,7 +13,7 @@ on:
 
 jobs:
   validate-waf-patterns:
-    runs-on: ${{ fromJSON(vars.RUNS_ON || '["self-hosted","runner-02"]') }}
+    runs-on: ubuntu-latest
 
     steps:
     - name: Checkout repository
