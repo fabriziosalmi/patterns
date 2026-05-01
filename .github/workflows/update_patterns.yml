@@ -99,7 +99,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         tag_name: latest
-        release_name: Latest Release
+        release_name: WAF rules (Nginx, Apache, Traefik, Haproxy)
         draft: false
         prerelease: false
 
