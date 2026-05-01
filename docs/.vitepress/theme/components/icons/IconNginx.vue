@@ -1,6 +1,7 @@
 <template>
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-    <path d="M12 2.5 3.5 7v10L12 21.5 20.5 17V7L12 2.5Z" />
-    <path d="M9 16V8l6 8V8" />
-  </svg>
+    <!-- Nginx-inspired hexagon mark with angular N -->
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 2.5 4 7v10l8 4.5L20 17V7L12 2.5Z" />
+        <path d="M9.5 16.5V8.2l5 7.7V8.2" />
+    </svg>
 </template>
