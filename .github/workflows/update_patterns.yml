@@ -91,61 +91,99 @@ jobs:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 
-    - name: 🚀 Create GitHub Release (if previous steps succeeded)
-      id: create_release
-      if: success()  # Only create release if previous steps were successful
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: 📝 Generate release notes
+      if: success()
+      run: |
+        set -euo pipefail
+
+        BUILD_DATE=$(date -u +'%Y-%m-%d')
+
+        # Latest CRS tag (falls back to v4.0 if API is unreachable)
+        CRS_REF=$(curl -sfL https://api.github.com/repos/coreruleset/coreruleset/releases/latest \
+                  | jq -r '.tag_name // "v4.0"' 2>/dev/null || echo "v4.0")
+
+        # OWASP source coverage
+        TOTAL_RULES=$(jq length owasp_rules.json)
+        CATEGORIES=$(jq -r '.[].category' owasp_rules.json | sort -u | wc -l | tr -d ' ')
+
+        # Bot pattern counts per backend
+        NGINX_BOTS=$(grep -c '^\s*"~' waf_patterns/nginx/bots.conf || echo 0)
+        APACHE_BOTS=$(grep -c '^SecRule REQUEST_HEADERS' waf_patterns/apache/bots.conf || echo 0)
+        TRAEFIK_BOTS=$(grep -cE '^\s*"' waf_patterns/traefik/bots.toml || echo 0)
+        HAPROXY_BOTS=$(grep -c '^acl' waf_patterns/haproxy/bots.acl || echo 0)
+
+        # Archive sizes (human-readable)
+        NGINX_SIZE=$(du -h dist/nginx_waf.zip | cut -f1)
+        APACHE_SIZE=$(du -h dist/apache_waf.zip | cut -f1)
+        TRAEFIK_SIZE=$(du -h dist/traefik_waf.zip | cut -f1)
+        HAPROXY_SIZE=$(du -h dist/haproxy_waf.zip | cut -f1)
+
+        # SHA-256 checksums
+        NGINX_SHA=$(sha256sum dist/nginx_waf.zip | cut -d' ' -f1)
+        APACHE_SHA=$(sha256sum dist/apache_waf.zip | cut -d' ' -f1)
+        TRAEFIK_SHA=$(sha256sum dist/traefik_waf.zip | cut -d' ' -f1)
+        HAPROXY_SHA=$(sha256sum dist/haproxy_waf.zip | cut -d' ' -f1)
+
+        cat > release_notes.md <<EOF
+        **Patterns build · ${BUILD_DATE}**
+
+        OWASP Core Rule Set [\`coreruleset/coreruleset@${CRS_REF}\`](https://github.com/coreruleset/coreruleset/releases/tag/${CRS_REF}) converted into native WAF rules for four web servers. Generated automatically; no manual edits.
+
+        **Coverage:** ${TOTAL_RULES} patterns across ${CATEGORIES} categories &mdash; SQLi, XSS, RCE, LFI, RFI, plus generic anomaly and protocol-violation rules.
+
+        ### Backends
+
+        | Backend  | Format            |    Bots | Archive               |     Size |
+        |----------|-------------------|--------:|-----------------------|---------:|
+        | Nginx    | \`map\` + \`if\`      | ${NGINX_BOTS}   | \`nginx_waf.zip\`     | ${NGINX_SIZE}    |
+        | Apache   | ModSecurity       | ${APACHE_BOTS}   | \`apache_waf.zip\`    | ${APACHE_SIZE}    |
+        | Traefik  | Middleware TOML   | ${TRAEFIK_BOTS}   | \`traefik_waf.zip\`   | ${TRAEFIK_SIZE}    |
+        | HAProxy  | ACL               | ${HAPROXY_BOTS}   | \`haproxy_waf.zip\`   | ${HAPROXY_SIZE}    |
+
+        ### Quick install
+
+        \`\`\`bash
+        curl -LO https://github.com/fabriziosalmi/patterns/releases/latest/download/nginx_waf.zip
+        unzip nginx_waf.zip -d /etc/nginx/waf_patterns
+        \`\`\`
+
+        Integration guides → [Nginx](https://fabriziosalmi.github.io/patterns/nginx) · [Apache](https://fabriziosalmi.github.io/patterns/apache) · [Traefik](https://fabriziosalmi.github.io/patterns/traefik) · [HAProxy](https://fabriziosalmi.github.io/patterns/haproxy)
+
+        ### Verify (SHA-256)
+
+        \`\`\`text
+        ${NGINX_SHA}  nginx_waf.zip
+        ${APACHE_SHA}  apache_waf.zip
+        ${TRAEFIK_SHA}  traefik_waf.zip
+        ${HAPROXY_SHA}  haproxy_waf.zip
+        \`\`\`
+
+        \`\`\`bash
+        echo "${NGINX_SHA}  nginx_waf.zip" | sha256sum -c -
+        \`\`\`
+
+        ---
+
+        [Documentation](https://fabriziosalmi.github.io/patterns/) · [Source](https://github.com/fabriziosalmi/patterns) · [Issues](https://github.com/fabriziosalmi/patterns/issues)
+        EOF
+
+        echo "Generated release_notes.md ($(wc -l < release_notes.md) lines)"
+
+    - name: 🚀 Publish release
+      if: success()
+      uses: softprops/action-gh-release@v2
       with:
         tag_name: latest
-        release_name: WAF rules (Nginx, Apache, Traefik, Haproxy)
-        draft: false
-        prerelease: false
-
-    - name: 📤 Upload Nginx WAF Zip
-      if: success()
-      uses: actions/upload-release-asset@v1
+        name: WAF rules (Nginx, Apache, Traefik, Haproxy)
+        body_path: release_notes.md
+        files: |
+          dist/nginx_waf.zip
+          dist/apache_waf.zip
+          dist/traefik_waf.zip
+          dist/haproxy_waf.zip
+        make_latest: 'true'
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: dist/nginx_waf.zip
-        asset_name: nginx_waf.zip
-        asset_content_type: application/zip
-
-    - name: 📤 Upload Apache WAF Zip
-      if: success()
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: dist/apache_waf.zip
-        asset_name: apache_waf.zip
-        asset_content_type: application/zip
-
-    - name: 📤 Upload Traefik WAF Zip
-      if: success()
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: dist/traefik_waf.zip
-        asset_name: traefik_waf.zip
-        asset_content_type: application/zip
-
-    - name: 📤 Upload HAProxy WAF Zip
-      if: success()
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: dist/haproxy_waf.zip
-        asset_name: haproxy_waf.zip
-        asset_content_type: application/zip
 
     - name: 🧹 Clean Up (Optional)
       if: always()  # Run cleanup even on failure
