@@ -1,85 +1,64 @@
 # HAProxy Integration
 
-This guide explains how to integrate the WAF patterns with HAProxy using ACL rules.
+This guide explains how to plug the generated rules into HAProxy using **ACL** files.
 
-## Quick Start
+## Quick start
 
-1. Download `haproxy_waf.zip` from [Releases](https://github.com/fabriziosalmi/patterns/releases)
-2. Extract the files
-3. Include the ACL files in your HAProxy configuration
+1. Download `haproxy_waf.zip` from the [latest release](https://github.com/fabriziosalmi/patterns/releases/latest).
+2. Drop the ACL files into `/etc/haproxy/` (or any path you prefer).
+3. Reference them from a `frontend` block.
+4. Reload HAProxy.
 
-## Configuration Files
-
-The HAProxy WAF package includes:
+## Files in the archive
 
 | File | Purpose |
 |------|---------|
-| `waf.acl` | Main WAF ACL rules |
-| `bots.acl` | Bad bot detection ACLs |
+| `waf.acl` | Pre-compiled regex patterns covering every OWASP CRS category |
+| `bots.acl` | Bad-bot User-Agent patterns |
 
-## Integration
+## Step 1 &mdash; Reference the ACL files
 
-### Step 1: Include ACL Files
-
-In your `haproxy.cfg`, include the WAF ACL files:
+The cleanest approach is to load the patterns from disk with `-f`:
 
 ```haproxy
 frontend http-in
     bind *:80
-    
-    # Include WAF ACL rules
-    acl waf_block_sqli path_reg -i union.*select
-    acl waf_block_sqli path_reg -i insert.*into
-    acl waf_block_xss path_reg -i <script>
-    
-    # Or include from external file
-    # acl waf_patterns path_reg -i -f /etc/haproxy/waf.acl
-    
-    # Block matching requests
-    http-request deny if waf_block_sqli
-    http-request deny if waf_block_xss
-    
+    bind *:443 ssl crt /etc/haproxy/certs/
+
+    acl waf_match    path,url_dec -m reg -i -f /etc/haproxy/waf.acl
+    acl waf_match_q  query        -m reg -i -f /etc/haproxy/waf.acl
+    acl bad_bot      hdr(User-Agent) -m reg -i -f /etc/haproxy/bots.acl
+
+    http-request deny deny_status 403 if waf_match || waf_match_q || bad_bot
+
     default_backend servers
 ```
 
-### Step 2: Include Bot Blockers
-
-```haproxy
-frontend http-in
-    bind *:80
-    
-    # Bad bot detection
-    acl bad_bot hdr_reg(User-Agent) -i -f /etc/haproxy/bots.acl
-    http-request deny if bad_bot
-    
-    default_backend servers
-```
-
-### Step 3: Reload HAProxy
+## Step 2 &mdash; Validate and reload
 
 ```bash
-haproxy -c -f /etc/haproxy/haproxy.cfg && sudo systemctl reload haproxy
+sudo haproxy -c -f /etc/haproxy/haproxy.cfg && sudo systemctl reload haproxy
 ```
 
-## ACL Rule Format
+## ACL primer
 
-HAProxy ACLs use pattern matching on various request attributes:
+HAProxy ACLs match against fetch samples (path, query, headers, …) using converters and matchers:
 
 ```haproxy
-# Match path
-acl sqli_path path_reg -i union.*select
+# Match path against a regex
+acl sqli_path  path -m reg -i union.*select
 
-# Match query string
-acl sqli_query url_param(id) -m reg -i union.*select
+# Match a specific query parameter
+acl sqli_qid   url_param(id) -m reg -i union.*select
 
-# Match headers
-acl bad_referer hdr_reg(Referer) -i malicious-site\.com
+# Match a request header
+acl bad_ref    hdr(Referer) -m reg -i malicious-site\.com
 
-# Combined conditions
-http-request deny if sqli_path OR sqli_query
+# Combine with boolean operators
+http-request deny if sqli_path || sqli_qid
 ```
 
-## Complete Example
+## A complete example
 
 ```haproxy
 global
@@ -91,102 +70,75 @@ defaults
     log global
     option httplog
     timeout connect 5s
-    timeout client 50s
-    timeout server 50s
+    timeout client  50s
+    timeout server  50s
 
 frontend http-in
     bind *:80
-    
-    # WAF Rules
-    acl waf_sqli path_reg -i (union.*select|insert.*into|delete.*from)
-    acl waf_xss path_reg -i (<script|javascript:|on\w+\s*=)
-    acl waf_lfi path_reg -i (\.\.\/|\.\.\\)
-    acl waf_rce path_reg -i (;|\||`|\$\()
-    
-    # Bot blocking
-    acl bad_bot hdr_reg(User-Agent) -i (AhrefsBot|SemrushBot|MJ12bot)
-    
-    # Deny malicious requests
-    http-request deny deny_status 403 if waf_sqli
-    http-request deny deny_status 403 if waf_xss
-    http-request deny deny_status 403 if waf_lfi
-    http-request deny deny_status 403 if waf_rce
-    http-request deny deny_status 403 if bad_bot
-    
+
+    # WAF
+    acl waf_match    path,url_dec -m reg -i -f /etc/haproxy/waf.acl
+    acl waf_match_q  query        -m reg -i -f /etc/haproxy/waf.acl
+    acl bad_bot      hdr(User-Agent) -m reg -i -f /etc/haproxy/bots.acl
+
+    # Block matching requests
+    http-request deny deny_status 403 if waf_match || waf_match_q || bad_bot
+
     default_backend servers
 
 backend servers
     balance roundrobin
-    server server1 127.0.0.1:8080 check
+    server srv1 127.0.0.1:8080 check
 ```
 
 ## Customization
 
-### Custom Error Pages
+### Custom error response
 
-Return a custom error page for blocked requests:
+Return a styled error body instead of the default empty 403:
 
 ```haproxy
-http-request deny deny_status 403 content-type text/html \
-    string "Access Denied" if waf_sqli
+http-request deny deny_status 403 \
+    content-type "text/html; charset=utf-8" \
+    string "<h1>Blocked by WAF</h1>" if waf_match
 ```
 
-### Logging Blocked Requests
-
-Create a dedicated log for WAF blocks:
+### Logging blocked requests
 
 ```haproxy
-frontend http-in
-    # Log blocked requests
-    http-request set-var(txn.blocked) str(1) if waf_sqli
-    http-request capture var(txn.blocked) len 1
-    
-    # Custom log format
-    log-format "%ci:%cp [%t] %ft %b/%s %Tq/%Tw/%Tc/%Tr/%Tt %ST %B %CC %CS %tsc %ac/%fc/%bc/%sc/%rc %sq/%bq blocked=%[var(txn.blocked)]"
+http-request set-var(txn.blocked) str(1) if waf_match
+http-request capture var(txn.blocked) len 1
+
+log-format "%ci:%cp [%t] %ft %b/%s %ST %B blocked=%[var(txn.blocked)] ua=%[capture.req.hdr(0)]"
 ```
 
-### Whitelist Paths
-
-Skip WAF for specific paths:
+### Per-path whitelist
 
 ```haproxy
-acl is_api path_beg /api/webhook
-http-request deny if waf_sqli !is_api
+acl is_webhook path_beg /api/webhook
+http-request deny deny_status 403 if waf_match !is_webhook
 ```
 
-## Rate Limiting
-
-Combine WAF with rate limiting:
+### Combine with rate limiting
 
 ```haproxy
-# Stick table for rate limiting
 stick-table type ip size 100k expire 30s store http_req_rate(10s)
 http-request track-sc0 src
-acl too_many_requests sc_http_req_rate(0) gt 100
-
-http-request deny if too_many_requests
+acl too_many sc_http_req_rate(0) gt 100
+http-request deny deny_status 429 if too_many
 ```
 
 ## Testing
 
 ```bash
-# Test SQL injection detection
 curl -I "http://example.com/?id=1' UNION SELECT * FROM users--"
-
-# Test bot blocking
 curl -A "AhrefsBot" -I "http://example.com/"
 
-# Check HAProxy stats
-echo "show stat" | socat stdio /var/run/haproxy.sock
+echo "show stat" | sudo socat stdio /var/run/haproxy.sock
 ```
 
 ## Troubleshooting
 
-### ACLs not matching
-Use `haproxy -c -f haproxy.cfg` to validate syntax. Enable debug logging to see ACL evaluation.
-
-### Performance impact
-ACL evaluation is fast, but complex regex patterns can add latency. Test with realistic traffic.
-
-### Configuration too large
-HAProxy has limits on configuration size. Consider splitting large ACL lists into multiple files.
+- **ACL never matches** &mdash; run `haproxy -c -f haproxy.cfg` to validate the syntax. Use `-d` for debug output to watch ACL evaluation in real time.
+- **Performance impact** &mdash; complex regex over `path,url_dec` adds per-request cost. Benchmark with realistic traffic before enabling globally.
+- **Configuration too large** &mdash; the converter keeps `waf.acl` flat and grep-friendly. Split it across multiple files if you need to apply different rule subsets to different frontends.

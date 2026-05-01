@@ -1,93 +1,100 @@
 # Apache Integration
 
-This guide explains how to integrate the WAF patterns with Apache using ModSecurity.
+This guide explains how to deploy the generated rules in Apache HTTPD using the **ModSecurity** engine.
 
 ## Prerequisites
 
-- Apache 2.4+
-- ModSecurity module installed
-
-### Install ModSecurity
+- Apache HTTPD **2.4+**
+- The **ModSecurity** module installed and enabled
 
 ::: code-group
 
-```bash [Debian/Ubuntu]
+```bash [Debian / Ubuntu]
 sudo apt install libapache2-mod-security2
 sudo a2enmod security2
 ```
 
-```bash [RHEL/CentOS]
-sudo yum install mod_security
+```bash [RHEL / CentOS / Rocky]
+sudo dnf install mod_security
+```
+
+```bash [Alpine]
+sudo apk add mod_security
 ```
 
 :::
 
-## Quick Start
+## Quick start
 
-1. Download `apache_waf.zip` from [Releases](https://github.com/fabriziosalmi/patterns/releases)
-2. Extract to your Apache configuration directory
-3. Include the files in your Apache configuration
+1. Download `apache_waf.zip` from the [latest release](https://github.com/fabriziosalmi/patterns/releases/latest).
+2. Extract under your Apache config tree (e.g. `/etc/apache2/waf_patterns/apache/`).
+3. Include the `.conf` files from the relevant virtual host or globally.
 
-## Configuration Files
+## Files in the archive
 
-The Apache WAF package includes ModSecurity rules organized by attack type:
+The Apache output is split by attack family, each containing standard ModSecurity `SecRule` directives.
 
-| File | Protection Type |
-|------|-----------------|
-| `sqli.conf` | SQL Injection |
-| `xss.conf` | Cross-Site Scripting |
-| `rce.conf` | Remote Code Execution |
-| `lfi.conf` | Local File Inclusion |
-| `rfi.conf` | Remote File Inclusion |
-| `bots.conf` | Bad Bot Detection |
+| File | Protection |
+|------|------------|
+| `sqli.conf` | SQL injection |
+| `xss.conf` | Cross-site scripting |
+| `rce.conf` | Remote code execution |
+| `lfi.conf` | Local file inclusion |
+| `rfi.conf` | Remote file inclusion |
+| `php.conf`, `java.conf`, `iis.conf`, `shells.conf` | Stack-specific exploits |
+| `attack.conf`, `generic.conf`, `correlation.conf`, `evaluation.conf` | Generic anomaly detection |
+| `bots.conf` | Bad-bot User-Agent rules |
 
-## Integration
+## Step 1 &mdash; Enable the engine
 
-### Step 1: Enable ModSecurity
-
-Create or edit `/etc/apache2/mods-enabled/security2.conf`:
+In `/etc/apache2/mods-enabled/security2.conf` (or equivalent):
 
 ```apache
 <IfModule security2_module>
     SecRuleEngine On
     SecRequestBodyAccess On
     SecResponseBodyAccess Off
-    SecDebugLogLevel 0
+    SecAuditEngine RelevantOnly
+    SecAuditLog /var/log/apache2/modsec_audit.log
+    SecAuditLogParts ABCDEFHZ
 </IfModule>
 ```
 
-### Step 2: Include WAF Rules
+::: tip Run in detection mode first
+Set `SecRuleEngine DetectionOnly` for the first deployment. Watch the audit log, tune false positives, then flip to `On`.
+:::
 
-Add to your Apache configuration or virtual host:
+## Step 2 &mdash; Include the rules
+
+Either include all files in one go:
 
 ```apache
-<VirtualHost *:80>
+<VirtualHost *:443>
     ServerName example.com
-    
-    # Include all WAF patterns
-    Include /path/to/waf_patterns/apache/*.conf
-    
-    # ... other configurations ...
+
+    Include /etc/apache2/waf_patterns/apache/*.conf
+    # …other directives
 </VirtualHost>
 ```
 
-Or include specific rule sets:
+…or pick the categories you want:
 
 ```apache
-Include /path/to/waf_patterns/apache/sqli.conf
-Include /path/to/waf_patterns/apache/xss.conf
-Include /path/to/waf_patterns/apache/bots.conf
+Include /etc/apache2/waf_patterns/apache/sqli.conf
+Include /etc/apache2/waf_patterns/apache/xss.conf
+Include /etc/apache2/waf_patterns/apache/rce.conf
+Include /etc/apache2/waf_patterns/apache/bots.conf
 ```
 
-### Step 3: Restart Apache
+## Step 3 &mdash; Validate and restart
 
 ```bash
 sudo apachectl configtest && sudo systemctl restart apache2
 ```
 
-## Rule Format
+## Rule format
 
-The rules follow ModSecurity syntax:
+Generated rules follow the standard ModSecurity DSL:
 
 ```apache
 SecRule REQUEST_URI "@rx union.*select" \
@@ -95,68 +102,50 @@ SecRule REQUEST_URI "@rx union.*select" \
     phase:2,\
     deny,\
     status:403,\
+    log,\
     msg:'SQL Injection Attempt',\
     severity:CRITICAL"
 ```
 
 ## Customization
 
-### Adjust Severity Levels
+### Detection-only mode
 
-Modify the action from `deny` to `log` for monitoring mode:
+Switch a noisy rule from blocking to logging without removing it:
 
 ```apache
-SecRule REQUEST_URI "@rx pattern" \
-    "id:100001,\
-    phase:2,\
-    log,\
-    pass,\
-    msg:'Potential attack detected'"
+SecRuleUpdateActionById 100001 "pass,log,msg:'SQLi candidate (audit only)'"
 ```
 
-### Whitelist Paths
-
-Add exceptions for specific paths:
+### Whitelist a path
 
 ```apache
 SecRule REQUEST_URI "@beginsWith /api/webhook" \
-    "id:1,\
-    phase:1,\
-    allow,\
-    nolog"
+    "id:1,phase:1,nolog,allow"
 ```
 
-## Logging
-
-ModSecurity logs are typically found at:
-- `/var/log/apache2/modsec_audit.log`
-- `/var/log/httpd/modsec_audit.log`
-
-Enable detailed logging:
+### Disable a single rule
 
 ```apache
-SecAuditEngine RelevantOnly
-SecAuditLog /var/log/apache2/modsec_audit.log
-SecAuditLogParts ABCDEFHZ
+SecRuleRemoveById 100001
 ```
+
+## Logs
+
+ModSecurity logs land in:
+
+- `/var/log/apache2/modsec_audit.log` &mdash; full audit trail
+- `/var/log/apache2/error.log` &mdash; rule matches and engine messages
 
 ## Testing
 
 ```bash
-# Test SQL injection detection
-curl -I "http://example.com/?id=1' UNION SELECT * FROM users--"
-
-# Check Apache error log
+curl -I "https://example.com/?id=1' UNION SELECT * FROM users--"
 sudo tail -f /var/log/apache2/error.log
 ```
 
 ## Troubleshooting
 
-### ModSecurity not loading
-Ensure the module is enabled: `sudo a2enmod security2`
-
-### Rules not triggering
-Check that `SecRuleEngine` is set to `On` and rules are being included.
-
-### Performance issues
-Consider using `SecRuleRemoveById` to disable noisy rules that cause false positives.
+- **Module not loading** &mdash; confirm with `apachectl -M | grep security2`. Re-enable with `sudo a2enmod security2`.
+- **No rules triggering** &mdash; double-check `SecRuleEngine On` and that the include path resolves; `apachectl -S` lists the parsed config.
+- **Performance regressions** &mdash; identify hot rules in the audit log and disable or scope them with `SecRuleRemoveById` / `SecRule … chain`.

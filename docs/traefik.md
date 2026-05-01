@@ -1,27 +1,21 @@
 # Traefik Integration
 
-This guide explains how to integrate the WAF patterns with Traefik using middleware plugins.
+This guide explains how to consume the generated WAF middleware in **Traefik v2 / v3**.
 
-## Quick Start
+## Quick start
 
-1. Download `traefik_waf.zip` from [Releases](https://github.com/fabriziosalmi/patterns/releases)
-2. Extract the files
-3. Configure the middleware in your Traefik configuration
+1. Download `traefik_waf.zip` from the [latest release](https://github.com/fabriziosalmi/patterns/releases/latest).
+2. Drop the TOML files into your dynamic configuration directory.
+3. Reference the middleware from each router that should be protected.
 
-## Configuration Files
-
-The Traefik WAF package includes:
+## Files in the archive
 
 | File | Purpose |
 |------|---------|
-| `middleware.toml` | WAF middleware configuration |
-| `bots.toml` | Bad bot detection rules |
+| `middleware.toml` | WAF middleware definition (regex patterns per category) |
+| `bots.toml` | Bad-bot User-Agent middleware |
 
-## Integration with File Provider
-
-### Step 1: Enable File Provider
-
-In your `traefik.toml` or `traefik.yml`:
+## Step 1 &mdash; Enable the file provider
 
 ::: code-group
 
@@ -41,39 +35,31 @@ providers:
 
 :::
 
-### Step 2: Copy Middleware Files
-
-Copy the WAF configuration files to your dynamic configuration directory:
+## Step 2 &mdash; Drop the TOML files in
 
 ```bash
-cp waf_patterns/traefik/*.toml /etc/traefik/dynamic/
+sudo cp waf_patterns/traefik/*.toml /etc/traefik/dynamic/
 ```
 
-### Step 3: Apply Middleware to Routes
+Traefik picks them up automatically because `watch = true`.
 
-Reference the middleware in your router configuration:
+## Step 3 &mdash; Reference the middleware
 
 ::: code-group
 
 ```toml [dynamic/routes.toml]
-[http.routers.my-router]
+[http.routers.app]
   rule = "Host(`example.com`)"
-  service = "my-service"
+  service = "app"
   middlewares = ["waf-protection", "bot-blocker"]
-
-[http.middlewares.waf-protection.plugin.waf]
-  # WAF configuration loaded from middleware.toml
-
-[http.middlewares.bot-blocker.plugin.botblocker]
-  # Bot blocking loaded from bots.toml
 ```
 
 ```yaml [dynamic/routes.yml]
 http:
   routers:
-    my-router:
+    app:
       rule: "Host(`example.com`)"
-      service: my-service
+      service: app
       middlewares:
         - waf-protection
         - bot-blocker
@@ -81,35 +67,27 @@ http:
 
 :::
 
-## Integration with Docker Labels
+The middleware names (`waf-protection`, `bot-blocker`) are the keys defined inside `middleware.toml` and `bots.toml`.
 
-For Docker-based deployments:
+## Docker labels
+
+For Docker / Compose deployments, attach the middleware via labels:
 
 ```yaml
 services:
-  my-app:
+  app:
     image: my-app:latest
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.my-app.rule=Host(`example.com`)"
-      - "traefik.http.routers.my-app.middlewares=waf@file"
+      - "traefik.http.routers.app.rule=Host(`example.com`)"
+      - "traefik.http.routers.app.middlewares=waf-protection@file,bot-blocker@file"
 ```
 
-## Middleware Configuration
+The `@file` suffix tells Traefik to resolve the middleware from the file provider.
 
-The `middleware.toml` contains regex-based blocking rules:
+## Plugin compatibility
 
-```toml
-[http.middlewares.waf.plugin.rewriteHeaders]
-  # SQL Injection patterns
-  [[http.middlewares.waf.plugin.rewriteHeaders.replacements]]
-    regex = "(?i)union.*select"
-    replacement = "BLOCKED"
-```
-
-## Using with Traefik Plugins
-
-For enhanced WAF capabilities, consider using community plugins:
+`middleware.toml` is generated against Traefik's built-in middleware primitives. If you prefer a dedicated WAF plugin (e.g. one of the community plugins on [Traefik Plugins](https://plugins.traefik.io/)), you can declare it side-by-side and chain both:
 
 ```yaml
 experimental:
@@ -121,25 +99,24 @@ experimental:
 
 ## Customization
 
-### Add Custom Patterns
+### Add custom patterns
 
-Edit `middleware.toml` to add your own patterns:
+Edit `middleware.toml` to extend the regex set:
 
 ```toml
-[[http.middlewares.waf.plugin.rewriteHeaders.replacements]]
+[[http.middlewares.waf-protection.plugin.rewriteHeaders.replacements]]
   regex = "your-custom-pattern"
   replacement = "BLOCKED"
 ```
 
 ### Logging
 
-Enable access logs to monitor blocked requests:
+Enable structured access logs to track middleware decisions:
 
 ```toml
 [accessLog]
   filePath = "/var/log/traefik/access.log"
   format = "json"
-  
   [accessLog.fields]
     [accessLog.fields.headers]
       defaultMode = "keep"
@@ -148,21 +125,12 @@ Enable access logs to monitor blocked requests:
 ## Testing
 
 ```bash
-# Test WAF detection
-curl -H "Host: example.com" \
-  "http://localhost/?id=1' OR '1'='1"
-
-# Check Traefik logs
+curl -H "Host: example.com" "http://localhost/?id=1' OR '1'='1"
 docker logs traefik 2>&1 | grep -i blocked
 ```
 
 ## Troubleshooting
 
-### Middleware not loading
-Check that the file provider is correctly configured and watching the right directory.
-
-### Routes not applying middleware
-Ensure the middleware name matches exactly between router and middleware definition.
-
-### Performance considerations
-Traefik's regex-based middleware can impact performance at high traffic. Monitor latency after enabling WAF rules.
+- **Middleware never loads** &mdash; check that the file provider directory matches and that `watch = true`. `traefik logs -f` shows hot-reload events.
+- **Router does not apply the middleware** &mdash; the middleware name must match exactly (case-sensitive) between router declaration and middleware definition.
+- **Latency** &mdash; regex middleware adds per-request overhead. Profile with `traefik` access logs and consider scoping the middleware to specific routers rather than applying globally.

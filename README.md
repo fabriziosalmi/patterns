@@ -1,212 +1,233 @@
-# 🔒 Patterns: OWASP CRS and Bad Bot Detection for Web Servers  
-
-Automate the scraping of **OWASP Core Rule Set (CRS)** patterns and convert them into **Apache, Nginx, Traefik, and HAProxy** WAF configurations.  
-Additionally, **Bad Bot/User-Agent detection** is integrated to block malicious web crawlers and scrapers.  
-
-> 🚀 **Protect your servers against SQL Injection (SQLi), XSS, RCE, LFI, and malicious bots – with automated daily updates.**  
-
----
-
-## 📌 Project Highlights  
-- **🛡️ OWASP CRS Protection** – Leverages OWASP Core Rule Set for web application firewall (WAF) defense.  
-- **🤖 Bad Bot Blocking** – Blocks known malicious bots using public bot lists.  
-- **⚙️ Multi-Web Server Support** – Generates WAF configs for **Apache, Nginx, Traefik, and HAProxy**.  
-- **🔄 Automatic Updates** – GitHub Actions fetch new rules **daily** and push updated configs.  
-- **📦 Pre-Generated Configurations** – Download ready-to-use WAF configurations from [GitHub Releases](https://github.com/fabriziosalmi/patterns/releases).  
-- **🧩 Scalable and Modular** – Easily extendable to support other web servers or load balancers.  
-
----
-
-## 🌐 Supported Web Servers  
-- **🔵 Nginx**  
-- **🟠 Apache (ModSecurity)**  
-- **🟣 Traefik**  
-- **🔴 HAProxy**  
-
-> [!NOTE]
-> If you are using Caddy, check the [caddy-waf](https://github.com/fabriziosalmi/caddy-waf) project.
+<div align="center">
+  <img src="docs/public/logo.svg" alt="Patterns" width="64" height="64" />
+  <h1>Patterns</h1>
+  <p><strong>Production-grade WAF rules, on autopilot.</strong></p>
+  <p>
+    Automated <a href="https://github.com/coreruleset/coreruleset">OWASP Core Rule Set</a> and
+    bad-bot patterns, converted into native configurations for
+    <strong>Nginx</strong>, <strong>Apache</strong>, <strong>Traefik</strong>, and <strong>HAProxy</strong>
+    &mdash; refreshed every day.
+  </p>
+  <p>
+    <a href="https://github.com/fabriziosalmi/patterns/releases/latest"><img alt="Latest Release" src="https://img.shields.io/github/v/release/fabriziosalmi/patterns?label=release&color=0071e3"></a>
+    <a href="https://github.com/fabriziosalmi/patterns/actions/workflows/update_patterns.yml"><img alt="Update workflow" src="https://github.com/fabriziosalmi/patterns/actions/workflows/update_patterns.yml/badge.svg"></a>
+    <a href="https://github.com/fabriziosalmi/patterns/actions/workflows/test_nginx.yml"><img alt="Nginx tests" src="https://github.com/fabriziosalmi/patterns/actions/workflows/test_nginx.yml/badge.svg"></a>
+    <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-1d1d1f"></a>
+    <a href="https://fabriziosalmi.github.io/patterns/"><img alt="Documentation" src="https://img.shields.io/badge/docs-online-0071e3"></a>
+  </p>
+  <p>
+    <a href="https://fabriziosalmi.github.io/patterns/">Documentation</a>
+    &middot;
+    <a href="https://fabriziosalmi.github.io/patterns/getting-started">Get started</a>
+    &middot;
+    <a href="https://github.com/fabriziosalmi/patterns/releases/latest">Latest release</a>
+  </p>
+</div>
 
 ---
 
-## 📂 Project Structure  
-```
-patterns/
-├── waf_patterns/           # 🔧 Generated WAF config files
-│   ├── nginx/              # Nginx WAF configs
-│   ├── apache/             # Apache WAF configs (ModSecurity)
-│   ├── traefik/            # Traefik WAF configs
-│   └── haproxy/            # HAProxy WAF configs
-├── import_apache_waf.py    # 📥 Import Apache WAF configurations
-├── import_haproxy_waf.py   # 📥 Import HAProxy WAF configurations
-├── import_nginx_waf.py     # 📥 Import Nginx WAF configurations
-├── import_traefik_waf.py   # 📥 Import Traefik WAF configurations
-├── owasp2json.py           # 🕵️ OWASP scraper (fetch CRS rules)
-├── json2nginx.py           # 🔄 Convert OWASP JSON to Nginx WAF configs
-├── json2apache.py          # 🔄 Convert OWASP JSON to Apache ModSecurity configs
-├── json2traefik.py         # 🔄 Convert OWASP JSON to Traefik WAF configs
-├── json2haproxy.py         # 🔄 Convert OWASP JSON to HAProxy WAF configs
-├── badbots.py              # 🤖 Generate WAF configs to block bad bots
-├── requirements.txt        # 📄 Required dependencies
-└── .github/workflows/      # 🤖 GitHub Actions for automation
-    └── update_patterns.yml
-```
+## Why Patterns
 
----
+The OWASP Core Rule Set (CRS) is the de-facto open-source rule base behind ModSecurity, but plugging it into anything other than Apache is non-trivial. Patterns automates the whole pipeline:
 
-## 🛠️ How It Works  
-### 🔹 1. Scraping OWASP Rules  
-- **`owasp2json.py`** scrapes the latest OWASP CRS patterns from GitHub.  
-- Extracts **SQLi, XSS, RCE, LFI** patterns from OWASP CRS `.conf` files.  
+1. Pull the latest CRS rules straight from upstream.
+2. Convert them into the **native** syntax of each web server &mdash; not a generic shim.
+3. Package the output as ready-to-deploy archives, refreshed every day by GitHub Actions.
 
-### 🔹 2. Generating WAF Configs for Each Platform  
-- **`json2nginx.py`** – Generates **Nginx WAF** configurations.  
-- **`json2apache.py`** – Outputs **Apache ModSecurity** rules.  
-- **`json2traefik.py`** – Creates **Traefik WAF** rules.  
-- **`json2haproxy.py`** – Builds **HAProxy ACL** files.  
+You get equivalent protection across SQL injection, XSS, RCE, LFI, and bad-bot traffic, regardless of which proxy you run.
 
-### 🔹 3. Bad Bot/User-Agent Detection  
-- **`badbots.py`** fetches public bot lists and generates bot-blocking configs.  
-- Supports fallback lists to ensure reliable detection.  
+## Highlights
 
----
+| | |
+|---|---|
+| **OWASP CRS coverage** | SQLi, XSS, RCE, LFI, RFI, plus generic anomaly and protocol-violation rules. |
+| **Native output** | Nginx `map`/`if`, Apache `SecRule`, Traefik middleware TOML, HAProxy ACL files. |
+| **Bad-bot blocking** | Curated User-Agent lists from public sources, with safe defaults that do **not** block major search engines. |
+| **Daily refresh** | A scheduled GitHub Actions workflow rebuilds every backend and publishes a fresh release. |
+| **Pre-built archives** | Skip the toolchain &mdash; download `nginx_waf.zip`, `apache_waf.zip`, `traefik_waf.zip`, or `haproxy_waf.zip`. |
+| **Composable** | Each backend is a small Python converter on top of one JSON intermediate. Adding a new platform is a few hundred lines. |
 
-## ⚙️ Installation  
+> Using **Caddy**? See the dedicated [`caddy-waf`](https://github.com/fabriziosalmi/caddy-waf) project.
 
-### Prerequisites
+## Quick start
 
-Before installing, ensure you have the following:
-- **Python 3.11 or higher** (the project uses Python 3.11 as specified in the GitHub Actions workflow)
-- **pip** (Python package installer)
-- **git** (for cloning the repository)
+### Option 1 &mdash; download a pre-built release
 
-### Option 1: Download Pre-Generated Configurations  
-You can download the latest pre-generated WAF configurations directly from the [GitHub Releases](https://github.com/fabriziosalmi/patterns/releases) page.  
-
-1. Go to the [Releases](https://github.com/fabriziosalmi/patterns/releases) section.  
-2. Download the zip file for your web server (e.g., `nginx_waf.zip`, `apache_waf.zip`).  
-3. Extract the files and follow the integration instructions below.  
-
-### Option 2: Build from Source  
-If you prefer to generate the configurations yourself:  
-
-**1. Clone the Repository:**  
 ```bash
-git clone https://github.com/fabriziosalmi/patterns.git  
+# Pick the archive that matches your stack
+curl -LO https://github.com/fabriziosalmi/patterns/releases/latest/download/nginx_waf.zip
+unzip nginx_waf.zip -d /etc/nginx/waf_patterns
+```
+
+Then follow the [Nginx](https://fabriziosalmi.github.io/patterns/nginx),
+[Apache](https://fabriziosalmi.github.io/patterns/apache),
+[Traefik](https://fabriziosalmi.github.io/patterns/traefik), or
+[HAProxy](https://fabriziosalmi.github.io/patterns/haproxy) integration guide.
+
+### Option 2 &mdash; build from source
+
+Requires **Python 3.11+**, `pip`, and `git`.
+
+```bash
+git clone https://github.com/fabriziosalmi/patterns.git
 cd patterns
-```
-
-**2. Install Dependencies:**  
-```bash
 pip install -r requirements.txt
+
+python owasp2json.py            # 1. Fetch the latest OWASP CRS into owasp_rules.json
+python json2nginx.py            # 2. Convert into Nginx WAF config
+python json2apache.py           #    …or Apache (ModSecurity)
+python json2traefik.py          #    …or Traefik middleware
+python json2haproxy.py          #    …or HAProxy ACL files
+python badbots.py               # 3. Generate bad-bot blocklists
 ```
 
-**3. Run Manually (Optional):**  
-```bash
-python owasp2json.py
-python json2nginx.py
-python json2apache.py
-python json2haproxy.py
-python json2traefik.py
-python badbots.py
+Generated files land in `waf_patterns/<platform>/`.
+
+## Architecture
+
+```text
+   ┌─────────────────────┐    daily cron     ┌──────────────────────┐
+   │ coreruleset/        │ ───────────────▶  │ owasp2json.py        │
+   │ coreruleset (GH)    │                   │   → owasp_rules.json │
+   └─────────────────────┘                   └──────────┬───────────┘
+                                                        │
+            ┌─────────────────┬──────────────────┬──────┴──────────┐
+            ▼                 ▼                  ▼                 ▼
+      json2nginx.py    json2apache.py    json2traefik.py    json2haproxy.py
+            │                 │                  │                 │
+            ▼                 ▼                  ▼                 ▼
+       nginx_waf.zip    apache_waf.zip    traefik_waf.zip    haproxy_waf.zip
+                          (published as a GitHub Release)
 ```
 
----
+Each converter is independent, idempotent, and configured exclusively through environment variables (`INPUT_FILE`, `OUTPUT_DIR`). Full reference at [docs/api](https://fabriziosalmi.github.io/patterns/api).
 
-## 🚀 Usage (Web Server Integration)  
+## Repository layout
 
-### 🔹 1. Nginx WAF Integration  
-1. Download the `nginx_waf.zip` file from the [Releases](https://github.com/fabriziosalmi/patterns/releases) page.  
-2. Extract the files to your Nginx configuration directory.  
-3. Include the generated `.conf` files in your Nginx configuration:  
-   ```nginx
-   include /path/to/waf_patterns/nginx/*.conf;
-   ```
+```text
+patterns/
+├── owasp2json.py            # Pull and parse OWASP CRS into a JSON intermediate
+├── json2nginx.py            # JSON → Nginx (map + if directives)
+├── json2apache.py           # JSON → Apache (ModSecurity SecRule)
+├── json2traefik.py          # JSON → Traefik (middleware TOML)
+├── json2haproxy.py          # JSON → HAProxy (ACL files)
+├── badbots.py               # Public bot lists → per-platform blocklists
+├── import_*_waf.py          # Optional installers for each platform
+├── waf_patterns/            # Generated outputs
+│   ├── nginx/
+│   ├── apache/
+│   ├── traefik/
+│   └── haproxy/
+├── docs/                    # VitePress documentation site
+├── tests/                   # Validation tests for each backend
+└── .github/workflows/       # Daily build + release automation
+```
 
-### 🔹 2. Apache WAF Integration  
-1. Download the `apache_waf.zip` file from the [Releases](https://github.com/fabriziosalmi/patterns/releases) page.  
-2. Extract the files to your Apache configuration directory.  
-3. Include the generated `.conf` files in your Apache configuration:  
-   ```apache
-   Include /path/to/waf_patterns/apache/*.conf
-   ```
+## Integration in 60 seconds
 
-### 🔹 3. Traefik WAF Integration  
-1. Download the `traefik_waf.zip` file from the [Releases](https://github.com/fabriziosalmi/patterns/releases) page.  
-2. Extract the files and use the `middleware.toml` file in your Traefik configuration.  
+### Nginx
 
-### 🔹 4. HAProxy WAF Integration  
-1. Download the `haproxy_waf.zip` file from the [Releases](https://github.com/fabriziosalmi/patterns/releases) page.  
-2. Extract the files and include the `waf.acl` file in your HAProxy configuration.  
+```nginx
+http {
+    include /etc/nginx/waf_patterns/nginx/waf_maps.conf;
+    include /etc/nginx/waf_patterns/nginx/bots.conf;
+}
+server {
+    include /etc/nginx/waf_patterns/nginx/waf_rules.conf;
+    if ($bad_bot) { return 403; }
+}
+```
 
----
+### Apache (ModSecurity)
 
-## 🔧 Example Output (Bot Blocker – Nginx)  
+```apache
+<IfModule security2_module>
+    SecRuleEngine On
+    Include /etc/apache2/waf_patterns/apache/*.conf
+</IfModule>
+```
+
+### Traefik
+
+```yaml
+http:
+  routers:
+    app:
+      rule: "Host(`example.com`)"
+      service: app
+      middlewares: [waf-protection@file, bot-blocker@file]
+```
+
+### HAProxy
+
+```haproxy
+frontend http-in
+    bind *:80
+    acl waf_match path,url_dec -m reg -i -f /etc/haproxy/waf.acl
+    acl bad_bot   hdr(User-Agent) -m reg -i -f /etc/haproxy/bots.acl
+    http-request deny deny_status 403 if waf_match || bad_bot
+```
+
+Full guides &mdash; with logging, whitelists, and tuning &mdash; live in the [docs](https://fabriziosalmi.github.io/patterns/).
+
+## Bad-bot example output (Nginx)
+
 ```nginx
 map $http_user_agent $bad_bot {
-    "~*AhrefsBot" 1;
-    "~*SemrushBot" 1;
-    "~*MJ12bot" 1;
     default 0;
+    "~*AhrefsBot"  1;
+    "~*SemrushBot" 1;
+    "~*MJ12bot"    1;
+    "~*GPTBot"     1;
 }
-if ($bad_bot) {
-    return 403;
-}
+
+if ($bad_bot) { return 403; }
 ```
 
----
+The default list blocks SEO crawlers, AI training bots, and known scanners while explicitly **allowing** major search engines (Google, Bing, DuckDuckGo, Yandex, Baidu).
 
-## 🤖 Automation (GitHub Workflow)  
-- **🕛 Daily Updates** – GitHub Actions fetch the latest OWASP CRS rules every day.  
-- **🔄 Auto Deployment** – Pushes new `.conf` files directly to `waf_patterns/`.  
-- **📦 Release Automation** – Automatically creates a new release with pre-generated configurations.  
-- **🎯 Manual Trigger** – Updates can also be triggered manually.  
+## Automation
 
----
+| Workflow | Schedule | Purpose |
+|----------|----------|---------|
+| [`update_patterns.yml`](.github/workflows/update_patterns.yml) | Daily + manual | Re-fetch CRS, regenerate every backend, publish a release |
+| [`test_nginx.yml`](.github/workflows/test_nginx.yml) | On PR | Validate generated Nginx rules against a live container |
+| [`test_apache_docker.yml`](.github/workflows/test_apache_docker.yml) | On PR | Validate generated Apache rules against ModSecurity in Docker |
+| [`docs.yml`](.github/workflows/docs.yml) | On `docs/` change | Build and deploy the VitePress docs to GitHub Pages |
 
-## 🤝 Contributing  
-1. **Fork** the repository.  
-2. Create a **feature branch** (`feature/new-patterns`).  
-3. **Commit** and push changes.  
-4. Open a **Pull Request**.  
+All workflows target the **`runner-02`** self-hosted runner by default, with an automatic fallback to GitHub-hosted runners by setting the repository variable `RUNS_ON` to `'["ubuntu-latest"]'`.
 
----
+## Documentation
 
-## 📄 License  
-This project is licensed under the **MIT License**.  
-See the [LICENSE](LICENSE) file for details.  
+The full documentation lives at **[fabriziosalmi.github.io/patterns](https://fabriziosalmi.github.io/patterns/)** &mdash; built with [VitePress](https://vitepress.dev/) and deployed automatically.
 
----
+- [Getting Started](https://fabriziosalmi.github.io/patterns/getting-started)
+- [Nginx](https://fabriziosalmi.github.io/patterns/nginx) &middot; [Apache](https://fabriziosalmi.github.io/patterns/apache) &middot; [Traefik](https://fabriziosalmi.github.io/patterns/traefik) &middot; [HAProxy](https://fabriziosalmi.github.io/patterns/haproxy)
+- [Bad Bot Detection](https://fabriziosalmi.github.io/patterns/badbots)
+- [API & Scripts Reference](https://fabriziosalmi.github.io/patterns/api)
 
-## Other Projects
+## Contributing
 
-If you like this project, you may also like these:
+1. Fork the repository.
+2. Create a feature branch: `git checkout -b feature/your-change`.
+3. Commit and push.
+4. Open a pull request &mdash; the test workflows will run automatically.
 
-- [caddy-waf](https://github.com/fabriziosalmi/caddy-waf) Caddy WAF (Regex Rules, IP and DNS filtering, Rate Limiting, GeoIP, Tor, Anomaly Detection) 
-- [blacklists](https://github.com/fabriziosalmi/blacklists) Hourly updated domains blacklist 🚫 
-- [proxmox-vm-autoscale](https://github.com/fabriziosalmi/proxmox-vm-autoscale) Automatically scale virtual machines resources on Proxmox hosts 
-- [UglyFeed](https://github.com/fabriziosalmi/UglyFeed) Retrieve, aggregate, filter, evaluate, rewrite and serve RSS feeds using Large Language Models for fun, research and learning purposes 
-- [proxmox-lxc-autoscale](https://github.com/fabriziosalmi/proxmox-lxc-autoscale) Automatically scale LXC containers resources on Proxmox hosts 
-- [DevGPT](https://github.com/fabriziosalmi/DevGPT) Code togheter, right now! GPT powered code assistant to build project in minutes
-- [websites-monitor](https://github.com/fabriziosalmi/websites-monitor) Websites monitoring via GitHub Actions (expiration, security, performances, privacy, SEO)
-- [caddy-mib](https://github.com/fabriziosalmi/caddy-mib) Track and ban client IPs generating repetitive errors on Caddy 
-- [zonecontrol](https://github.com/fabriziosalmi/zonecontrol) Cloudflare Zones Settings Automation using GitHub Actions 
-- [lws](https://github.com/fabriziosalmi/lws) linux (containers) web services
-- [cf-box](https://github.com/fabriziosalmi/cf-box) cf-box is a set of Python tools to play with API and multiple Cloudflare accounts.
-- [limits](https://github.com/fabriziosalmi/limits) Automated rate limits implementation for web servers 
-- [dnscontrol-actions](https://github.com/fabriziosalmi/dnscontrol-actions) Automate DNS updates and rollbacks across multiple providers using DNSControl and GitHub Actions 
-- [proxmox-lxc-autoscale-ml](https://github.com/fabriziosalmi/proxmox-lxc-autoscale-ml) Automatically scale the LXC containers resources on Proxmox hosts with AI
-- [csv-anonymizer](https://github.com/fabriziosalmi/csv-anonymizer) CSV fuzzer/anonymizer
-- [iamnotacoder](https://github.com/fabriziosalmi/iamnotacoder) AI code generation and improvement
+See [CONTRIBUTING.md](CONTRIBUTING.md) for details and [SECURITY.md](SECURITY.md) for the disclosure policy.
 
----
-## 📞 Need Help?  
-- **Issues?** Open a ticket in the [Issues Tab](https://github.com/fabriziosalmi/patterns/issues).  
+## License
+
+Released under the [MIT License](LICENSE).
+
+## Resources
+
+- [OWASP Core Rule Set](https://github.com/coreruleset/coreruleset)
+- [ModSecurity](https://modsecurity.org/)
+- [Nginx](https://nginx.org/) &middot; [Apache HTTPD](https://httpd.apache.org/) &middot; [Traefik](https://traefik.io/) &middot; [HAProxy](https://www.haproxy.org/)
+- [ai.robots.txt](https://github.com/ai-robots-txt/ai.robots.txt) &mdash; upstream AI-bot list
 
 ---
 
-## 🌐 Resources  
-- [OWASP CRS](https://github.com/coreruleset/coreruleset)  
-- [Apache ModSecurity](https://modsecurity.org/)  
-- [Nginx](https://nginx.org/)  
-- [Traefik](https://github.com/traefik/traefik)  
-- [HaProxy](https://www.haproxy.org/)  
+<div align="center">
+  <sub>Built and maintained by <a href="https://github.com/fabriziosalmi">Fabrizio Salmi</a>.</sub>
+</div>

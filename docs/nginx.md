@@ -1,131 +1,123 @@
 # Nginx Integration
 
-This guide explains how to integrate the WAF patterns into your Nginx configuration.
+This guide explains how to wire the generated rules into an Nginx configuration.
 
-## Quick Start
+## Quick start
 
-1. Download `nginx_waf.zip` from [Releases](https://github.com/fabriziosalmi/patterns/releases)
-2. Extract to your Nginx configuration directory
-3. Include the configuration files as shown below
+1. Download `nginx_waf.zip` from the [latest release](https://github.com/fabriziosalmi/patterns/releases/latest) and extract it (e.g. into `/etc/nginx/waf_patterns/nginx/`).
+2. Include `waf_maps.conf` from the `http` block.
+3. Include `waf_rules.conf` from each `server` (or `location`) you want to protect.
+4. Reload Nginx.
 
-## Configuration Files
+## Files in the archive
 
-The Nginx WAF package includes:
-
-| File | Purpose | Include Location |
+| File | Purpose | Where to include |
 |------|---------|------------------|
-| `waf_maps.conf` | Map directives for pattern matching | `http` block |
-| `waf_rules.conf` | If statements for blocking | `server` block |
-| `bots.conf` | Bad bot detection maps | `http` block |
+| `waf_maps.conf` | Defines `map` variables for every attack category | `http` block |
+| `waf_rules.conf` | `if (...) { return 403; }` rules that consume those maps | `server` or `location` block |
+| `bots.conf` | `map $http_user_agent $bad_bot` for User-Agent filtering | `http` block |
+| `sqli.conf`, `xss.conf`, `rce.conf`, `lfi.conf`, … | Per-category files for inspection only | **Do not include directly** |
 
-## Integration
+::: warning Use only the two main files
+The per-category `.conf` files (`attack.conf`, `xss.conf`, `sqli.conf`, …) are emitted for inspection. They contain both `map` and `if` directives, which Nginx does not allow in the same context. Always include `waf_maps.conf` + `waf_rules.conf` instead.
+:::
 
-### Step 1: Include Maps in HTTP Block
+## Step 1 &mdash; Include the maps
 
-The map directives **must** be included in the `http` context:
+The `map` directives must live in the `http` context:
 
 ```nginx
 http {
-    # Include WAF maps (pattern definitions)
-    include /path/to/waf_patterns/nginx/waf_maps.conf;
-    
-    # Include bot detection maps
-    include /path/to/waf_patterns/nginx/bots.conf;
-    
-    # ... other http configurations ...
+    include /etc/nginx/waf_patterns/nginx/waf_maps.conf;
+    include /etc/nginx/waf_patterns/nginx/bots.conf;
+
+    # …rest of your http config
 }
 ```
 
-### Step 2: Include Rules in Server Block
+## Step 2 &mdash; Include the rules
 
-The blocking rules go inside your `server` or `location` block:
+Place the blocking rules inside any `server` block you want to protect:
 
 ```nginx
 server {
-    listen 80;
+    listen 443 ssl http2;
     server_name example.com;
-    
-    # Include WAF rules
-    include /path/to/waf_patterns/nginx/waf_rules.conf;
-    
-    # ... other server configurations ...
+
+    include /etc/nginx/waf_patterns/nginx/waf_rules.conf;
+
+    if ($bad_bot) { return 403; }
+
+    # …your locations
 }
 ```
 
-### Step 3: Reload Nginx
-
-Test and reload the configuration:
+## Step 3 &mdash; Validate and reload
 
 ```bash
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-## How It Works
+## How it works
 
-The WAF uses Nginx's `map` directive for efficient pattern matching:
+The converter rewrites every OWASP regex into a `map` lookup, which Nginx evaluates with O(1) overhead per request:
 
 ```nginx
 map $request_uri $waf_block_sqli {
     default 0;
-    "~*union.*select" 1;
-    "~*insert.*into" 1;
+    "~*union[\s\S]+select"  1;
+    "~*insert[\s\S]+into"   1;
 }
 
-if ($waf_block_sqli) {
-    return 403;
-}
+# …elsewhere, in a server block:
+if ($waf_block_sqli) { return 403; }
 ```
+
+The full set of map variables is `$waf_block_<category>` &mdash; one per attack family the OWASP CRS defines.
 
 ## Customization
 
-### Enable Logging
+### Log blocked requests
 
-To log blocked requests, edit `waf_rules.conf` and uncomment the logging lines:
+Add a dedicated access log next to the deny:
 
 ```nginx
-if ($waf_block_sqli) {
-    return 403;
-    access_log /var/log/nginx/waf_blocked.log;
+log_format waf_block '$remote_addr - [$time_local] "$request" '
+                     'blocked=$waf_block_sqli ua="$http_user_agent"';
+
+server {
+    access_log /var/log/nginx/waf_blocked.log waf_block if=$waf_block_sqli;
+    include /etc/nginx/waf_patterns/nginx/waf_rules.conf;
 }
 ```
 
-### Whitelist Specific Paths
+### Whitelist a path
 
-Add exceptions before the WAF rules:
+Skip the WAF inside specific routes by branching before the include:
 
 ```nginx
-location /api/webhook {
-    # Skip WAF for this path
-    # ... your configuration ...
+location = /api/webhook {
+    proxy_pass http://upstream;
+    # waf_rules.conf intentionally not included here
 }
 
-# WAF rules for other paths
-include /path/to/waf_patterns/nginx/waf_rules.conf;
+location / {
+    include /etc/nginx/waf_patterns/nginx/waf_rules.conf;
+    proxy_pass http://upstream;
+}
 ```
-
-::: warning Important
-Individual category files like `attack.conf` or `xss.conf` should **not** be included directly. They contain both `map` and `if` directives which cannot be used in the same context. Always use `waf_maps.conf` + `waf_rules.conf`.
-:::
 
 ## Testing
 
-Test your WAF configuration with common attack patterns:
+Probe the deployment with known-bad payloads &mdash; both should return `403`:
 
 ```bash
-# Should be blocked (SQL injection)
-curl -I "http://example.com/?id=1' OR '1'='1"
-
-# Should be blocked (XSS)
-curl -I "http://example.com/?q=<script>alert(1)</script>"
+curl -I "https://example.com/?id=1' OR '1'='1"
+curl -I "https://example.com/?q=<script>alert(1)</script>"
 ```
 
 ## Troubleshooting
 
-### Configuration errors
-Always run `nginx -t` before reloading to catch syntax errors.
-
-### False positives
-If legitimate requests are being blocked, check `/var/log/nginx/error.log` and consider adding path-specific exceptions.
-
-### Performance
-The map-based approach is highly efficient. For high-traffic sites, consider enabling caching for the map variables.
+- **`nginx: configuration file test failed`** &mdash; you likely included a per-category file. Switch to `waf_maps.conf` + `waf_rules.conf`.
+- **False positives** &mdash; check `/var/log/nginx/error.log`, identify the matching `$waf_block_*` variable, then add a `location`-scoped exemption.
+- **High traffic** &mdash; the `map`-based design is already the fastest option Nginx offers; no further tuning is normally needed.

@@ -1,78 +1,94 @@
 # Getting Started
 
-This guide will help you get up and running with Patterns WAF configurations for your web server.
+This guide walks you through installing **Patterns** and integrating the generated WAF rules into your web server.
 
 ## Prerequisites
 
-- **Python 3.11+** (if building from source)
-- **pip** (Python package installer)
-- **git** (for cloning the repository)
+| Requirement | Notes |
+|-------------|-------|
+| **Python 3.11+** | Only required when building from source. The CI workflow targets 3.11. |
+| **pip** | To install the packages listed in `requirements.txt`. |
+| **git** | Optional &mdash; only needed if cloning the repository. |
 
-## Installation Options
+## Two installation paths
 
-### Option 1: Download Pre-Generated Configurations
+### Option 1 &mdash; Download a pre-built release
 
-The easiest way to get started is to download pre-built configurations:
+The fastest path. A scheduled GitHub Actions workflow rebuilds every archive daily and publishes them on the [Releases page](https://github.com/fabriziosalmi/patterns/releases/latest).
 
-1. Go to the [Releases](https://github.com/fabriziosalmi/patterns/releases) page
-2. Download the ZIP file for your web server:
-   - `nginx_waf.zip` - Nginx configurations
-   - `apache_waf.zip` - Apache ModSecurity rules
-   - `traefik_waf.zip` - Traefik middleware
-   - `haproxy_waf.zip` - HAProxy ACL files
-3. Extract and integrate into your server configuration
+| Archive | Contains | Target |
+|---------|----------|--------|
+| `nginx_waf.zip` | `waf_maps.conf`, `waf_rules.conf`, `bots.conf`, category files | Nginx |
+| `apache_waf.zip` | Per-category ModSecurity `.conf` files, `bots.conf` | Apache + mod_security2 |
+| `traefik_waf.zip` | `middleware.toml`, `bots.toml` | Traefik (file provider) |
+| `haproxy_waf.zip` | `waf.acl`, `bots.acl` | HAProxy |
 
-### Option 2: Build from Source
+Pick one, extract, then jump to the matching integration guide.
 
-If you prefer to generate the configurations yourself:
+### Option 2 &mdash; Build from source
+
+Choose this path if you want to pin a specific OWASP CRS tag, customize the converter, or run the toolchain in your own CI:
 
 ```bash
-# Clone the repository
 git clone https://github.com/fabriziosalmi/patterns.git
 cd patterns
-
-# Install dependencies
 pip install -r requirements.txt
 
-# Fetch latest OWASP rules
+# 1. Fetch the latest OWASP Core Rule Set into a JSON intermediate
 python owasp2json.py
 
-# Generate configurations for your platform
-python json2nginx.py    # For Nginx
-python json2apache.py   # For Apache
-python json2traefik.py  # For Traefik
-python json2haproxy.py  # For HAProxy
+# 2. Convert the JSON into native rules for your platform
+python json2nginx.py
+python json2apache.py
+python json2traefik.py
+python json2haproxy.py
 
-# Generate bad bot blockers
+# 3. Generate bad-bot blocklists alongside
 python badbots.py
 ```
 
-## Configuration Files
+::: tip GitHub API rate limits
+`owasp2json.py` reads from the GitHub API. Set `GITHUB_TOKEN` in your environment to raise the rate limit when iterating locally.
+:::
 
-After running the scripts, you'll find the generated files in the `waf_patterns/` directory:
+## Output layout
 
-```
+After running the converters, generated files live under `waf_patterns/`:
+
+```text
 waf_patterns/
-├── nginx/          # Nginx WAF configs
-├── apache/         # Apache ModSecurity rules
-├── traefik/        # Traefik middleware configs
-└── haproxy/        # HAProxy ACL files
+├── nginx/      # waf_maps.conf, waf_rules.conf, bots.conf, per-category files
+├── apache/     # sqli.conf, xss.conf, rce.conf, lfi.conf, … bots.conf
+├── traefik/    # middleware.toml, bots.toml
+└── haproxy/    # waf.acl, bots.acl
 ```
 
-## Next Steps
+## Next steps
 
-Choose your web server to learn how to integrate the WAF configurations:
+Choose your platform to wire the rules into a running server:
 
-- [Nginx Integration](/nginx)
-- [Apache Integration](/apache)
-- [Traefik Integration](/traefik)
-- [HAProxy Integration](/haproxy)
+- [Nginx integration](/nginx)
+- [Apache (ModSecurity) integration](/apache)
+- [Traefik integration](/traefik)
+- [HAProxy integration](/haproxy)
 
-## Automatic Updates
+For details on the bot blocklist itself, see [Bad Bot Detection](/badbots). For a reference of every script and the JSON schema that ties them together, see the [API reference](/api).
 
-The repository includes a GitHub Actions workflow that:
-- Fetches the latest OWASP CRS rules **daily**
-- Regenerates all WAF configurations
-- Creates a new release with updated files
+## How updates flow
 
-To get the latest rules, simply download from the [Releases](https://github.com/fabriziosalmi/patterns/releases) page or pull the latest changes if you cloned the repository.
+```text
+   ┌─────────────────────┐    daily cron     ┌──────────────────────┐
+   │ coreruleset/        │ ───────────────▶  │ owasp2json.py        │
+   │ coreruleset (GH)    │                   │   → owasp_rules.json │
+   └─────────────────────┘                   └──────────┬───────────┘
+                                                        │
+            ┌─────────────────┬──────────────────┬──────┴──────────┐
+            ▼                 ▼                  ▼                 ▼
+      json2nginx.py    json2apache.py    json2traefik.py    json2haproxy.py
+            │                 │                  │                 │
+            ▼                 ▼                  ▼                 ▼
+       nginx_waf.zip    apache_waf.zip    traefik_waf.zip    haproxy_waf.zip
+                          (published as a GitHub Release)
+```
+
+To stay current, either download the latest archive or `git pull` and re-run the converters.
