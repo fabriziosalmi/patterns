@@ -66,7 +66,7 @@ Then follow the [Nginx](https://fabriziosalmi.github.io/patterns/nginx),
 
 ### Option 2 &mdash; build from source
 
-Requires **Python 3.11+**, `pip`, and `git`.
+Requires **Python 3.9+**, `pip`, and `git`.
 
 ```bash
 git clone https://github.com/fabriziosalmi/patterns.git
