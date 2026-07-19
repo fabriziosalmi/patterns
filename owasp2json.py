@@ -301,15 +301,48 @@ def fetch_owasp_rules(session: requests.Session, rule_files: List[Dict[str, str]
     return all_rules
 
 
-def save_as_json(rules: List[Dict[str, str]], output_file: str) -> bool:
-    """Saves the extracted rules to a JSON file (atomically)."""
+def build_provenance(source_ref: str) -> Dict[str, str]:
+    """Builds the attribution / provenance block embedded in owasp_rules.json.
+
+    owasp_rules.json is a *derived work*: the patterns are extracted and
+    converted from the OWASP Core Rule Set (Apache-2.0). Recording the source,
+    reference and license here keeps the intermediate artifact self-describing
+    and satisfies the attribution / "state changes" expectations of Apache-2.0
+    (see THIRD_PARTY_NOTICES.md).
+    """
+    return {
+        "source": "OWASP CoreRuleSet",
+        "source_repo": "https://github.com/coreruleset/coreruleset",
+        "source_ref": source_ref or "latest",
+        "license": "Apache-2.0",
+        "note": (
+            "Derived work: SecRule patterns extracted and converted from the "
+            "OWASP Core Rule Set, redistributed under Apache-2.0. "
+            "See THIRD_PARTY_NOTICES.md."
+        ),
+        "generated_by": "fabriziosalmi/patterns (owasp2json.py)",
+    }
+
+
+def save_as_json(
+    rules: List[Dict[str, str]],
+    output_file: str,
+    provenance: Optional[Dict[str, str]] = None,
+) -> bool:
+    """Saves the extracted rules to a JSON file (atomically).
+
+    When ``provenance`` is supplied the payload is wrapped as
+    ``{"_provenance": {...}, "rules": [...]}`` so the attribution travels with
+    the data. The converters accept both this object form and a bare list.
+    """
     try:
         output_dir = Path(output_file).parent
         if output_dir:
              output_dir.mkdir(parents=True, exist_ok=True)
         temp_file = f"{output_file}.tmp"  # Use a temporary file
+        payload = {"_provenance": provenance, "rules": rules} if provenance is not None else rules
         with open(temp_file, "w", encoding="utf-8") as f:
-            json.dump(rules, f, indent=4)
+            json.dump(payload, f, indent=4)
         os.replace(temp_file, output_file)  # Atomic rename
         logger.info(f"Rules saved to {output_file}")
         return True
@@ -349,9 +382,10 @@ def main():
     rules = fetch_owasp_rules(session, rule_files)
 
     # 4. Save the rules to a JSON file (unless it's a dry run).
+    ref_name = latest_ref.split("/")[-1] if latest_ref else args.ref
     if not args.dry_run:
         if rules:
-            if save_as_json(rules, args.output):
+            if save_as_json(rules, args.output, build_provenance(ref_name)):
                 logger.info("Successfully saved rules to JSON.")
             else:
                 logger.error("Failed to save rules to JSON.") # if the save fail

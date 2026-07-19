@@ -102,9 +102,10 @@ jobs:
         CRS_REF=$(curl -sfL https://api.github.com/repos/coreruleset/coreruleset/releases/latest \
                   | jq -r '.tag_name // "v4.0"' 2>/dev/null || echo "v4.0")
 
-        # OWASP source coverage
-        TOTAL_RULES=$(jq length owasp_rules.json)
-        CATEGORIES=$(jq -r '.[].category' owasp_rules.json | sort -u | wc -l | tr -d ' ')
+        # OWASP source coverage (owasp_rules.json is a {_provenance, rules} object;
+        # the legacy bare-array form is still handled for backward compatibility)
+        TOTAL_RULES=$(jq 'if type=="array" then length else (.rules | length) end' owasp_rules.json)
+        CATEGORIES=$(jq -r 'if type=="array" then .[] else .rules[] end | .category' owasp_rules.json | sort -u | wc -l | tr -d ' ')
 
         # Bot pattern counts per backend
         NGINX_BOTS=$(grep -c '^\s*"~' waf_patterns/nginx/bots.conf || echo 0)

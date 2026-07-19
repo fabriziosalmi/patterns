@@ -217,14 +217,24 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details and [SECURITY.md](SECURITY.md
 
 ## License
 
-Released under the [MIT License](LICENSE).
+The **original code** of this project &mdash; the Python converters, the
+documentation, and the tests &mdash; is released under the [MIT License](LICENSE)
+(Copyright &copy; Fabrizio Salmi).
+
+The **generated data** is not covered by that MIT grant. `owasp_rules.json` and
+everything under `waf_patterns/**` are derived/converted from third-party
+sources &mdash; chiefly the [OWASP Core Rule Set](https://github.com/coreruleset/coreruleset)
+(Apache-2.0), plus public bad-bot and referrer-spam lists &mdash; and are
+redistributed under those upstream licenses, not under MIT. See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the source-by-source
+breakdown and [`LICENSES/`](LICENSES/) for the required license texts.
 
 ## Resources
 
 - [OWASP Core Rule Set](https://github.com/coreruleset/coreruleset)
 - [ModSecurity](https://modsecurity.org/)
 - [Nginx](https://nginx.org/) &middot; [Apache HTTPD](https://httpd.apache.org/) &middot; [Traefik](https://traefik.io/) &middot; [HAProxy](https://www.haproxy.org/)
-- [ai.robots.txt](https://github.com/ai-robots-txt/ai.robots.txt) &mdash; upstream AI-bot list
+- Bad-bot &amp; referrer-spam sources &mdash; [Crawler-Detect](https://github.com/JayBizzle/Crawler-Detect), [nginx-ultimate-bad-bot-blocker](https://github.com/mitchellkrogza/nginx-ultimate-bad-bot-blocker), [referrer-spam-blacklist](https://github.com/matomo-org/referrer-spam-blacklist)
 
 ---
 
