@@ -206,6 +206,10 @@ The full documentation lives at **[fabriziosalmi.github.io/patterns](https://fab
 - [Bad Bot Detection](https://fabriziosalmi.github.io/patterns/badbots)
 - [API & Scripts Reference](https://fabriziosalmi.github.io/patterns/api)
 
+## Commercial support & consulting
+
+Running these WAF rules in production? I offer paid support, custom rule development, and security consulting - WAF tuning, hardening, TLS automation, and cloud detection & alerting. Reach out: **fabrizio.salmi@gmail.com**.
+
 ## Contributing
 
 1. Fork the repository.
