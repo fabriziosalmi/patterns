@@ -18,6 +18,9 @@ export default defineConfig({
     titleTemplate: ':title — Patterns',
     description: 'Automated OWASP CRS and bad-bot rules for Nginx, Apache, Traefik, and HAProxy.',
     base: '/patterns/',
+    // The hostname carries the base path on purpose: VitePress joins it with each
+    // page's route, so without it every URL in the sitemap would point at a 404.
+    sitemap: { hostname: 'https://fabriziosalmi.github.io/patterns/' },
     cleanUrls: true,
     lastUpdated: true,
 
