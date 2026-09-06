@@ -6,7 +6,8 @@ import base64
 import hashlib
 import logging
 import argparse
-from typing import List, Dict, Optional, Match
+import sys
+from typing import List, Dict, Optional, Match, Tuple
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -17,7 +18,7 @@ from tqdm import tqdm
 LOG_LEVEL = logging.INFO  # Set to DEBUG for more verbose output
 GITHUB_REPO_URL = "https://api.github.com/repos/coreruleset/coreruleset"
 OWASP_CRS_BASE_URL = f"{GITHUB_REPO_URL}/contents/rules"
-GITHUB_REF = "v4.0"  # More specific default: Major version only
+GITHUB_REF = "latest"  # Newest stable Core Rule Set release
 RATE_LIMIT_DELAY = 60  # Shorter delay, rely on exponential backoff
 RETRY_DELAY = 2       # Shorter initial retry
 MAX_RETRIES = 8        # More retries
@@ -95,39 +96,120 @@ def fetch_with_retries(session: requests.Session, url: str) -> requests.Response
     raise GitHubRequestError(f"Failed to fetch {url} after {MAX_RETRIES} retries.")
 
 
-def fetch_latest_tag(session: requests.Session, ref_prefix: str) -> Optional[str]:
-    """Fetches the latest matching Git tag, or falls back to the latest overall."""
-    ref_url = f"{GITHUB_REPO_URL}/git/refs/tags"
+SEMVER_TAG = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:[-+](.*))?$")
+
+
+def _version_key(tag_name: str) -> Optional[Tuple[int, int, int, int, str]]:
+    """
+    Orders a semantic version tag.
+
+    Returns None for a tag that is not a version, so it can be filtered out
+    rather than compared as a string. The fourth element ranks a release above
+    its own pre-releases: `v4.0.0` must sort above `v4.0.0-rc2`, which plain
+    string ordering gets backwards because the longer string wins.
+
+    Args:
+        tag_name: A tag such as 'v4.29.0' or 'v4.0.0-rc2'.
+
+    Returns:
+        A sort key, or None if the tag is not a semantic version.
+    """
+    match = SEMVER_TAG.match(tag_name)
+    if not match:
+        return None
+    major, minor, patch, pre = match.groups()
+    return (int(major), int(minor), int(patch), 0 if pre else 1, pre or "")
+
+
+def is_prerelease(tag_name: str) -> bool:
+    """True when the tag carries a pre-release suffix such as -rc2 or -beta1."""
+    match = SEMVER_TAG.match(tag_name)
+    return bool(match and match.group(4))
+
+
+def fetch_tags(session: requests.Session) -> List[str]:
+    """
+    Fetches every tag name in the upstream repository.
+
+    Paginated: the single unpaginated request this used to make silently
+    truncates once the repository has more tags than one page holds.
+    """
+    tags: List[str] = []
+    page = 1
+    while True:
+        url = f"{GITHUB_REPO_URL}/git/refs/tags?per_page=100&page={page}"
+        response = fetch_with_retries(session, url)
+        batch = response.json()
+        if not isinstance(batch, list) or not batch:
+            break
+        tags.extend(ref["ref"].split("/")[-1] for ref in batch)
+        if len(batch) < 100:
+            break
+        page += 1
+    return tags
+
+
+def resolve_ref(session: requests.Session, requested: str) -> Optional[str]:
+    """
+    Resolves the requested reference to exactly one upstream tag.
+
+    Three shapes are accepted, in this order:
+
+    - `latest`, the default: the newest stable release by semantic version.
+    - An exact tag that exists upstream, used as given. This is how a build is
+      pinned to a known Core Rule Set version.
+    - A version prefix such as `v4` or `v4.1`, resolved to the newest stable
+      tag under it.
+
+    This replaces a prefix match ordered as strings, which resolved the default
+    `v4.0` to `v4.0.0-rc2`: a release candidate sorts above its own release
+    because it is the longer string. The build converted that release candidate
+    while the release notes advertised the current version (#43).
+
+    Args:
+        session: The HTTP session to use.
+        requested: `latest`, an exact tag, or a version prefix.
+
+    Returns:
+        The resolved tag name, or None if nothing matched.
+    """
     try:
-        response = fetch_with_retries(session, ref_url)
-        tags = response.json()
-
-        if not tags:
-            logger.warning("No tags found in the repository.")
-            return None
-
-        # Filter tags that start with the given prefix.
-        matching_tags = [
-            r["ref"] for r in tags
-            if r["ref"].startswith(f"refs/tags/{ref_prefix}")
-        ]
-        # Sort matching tags to find the latest (lexicographically, assuming semver).
-        matching_tags.sort(reverse=True)
-
-        if matching_tags:
-            latest_tag = matching_tags[0]  # The first tag is the latest
-            logger.info(f"Latest matching tag: {latest_tag}")
-            return latest_tag
-
-        # Fallback:  If no matching tags, return the *very* latest tag.
-        logger.warning(f"No matching refs found for prefix '{ref_prefix}'.  Using latest tag.")
-        # Sort *all* tags and get the last one.
-        tags.sort(key=lambda x: x["ref"], reverse=True)
-        return tags[0]["ref"] if tags else None
-
+        tags = fetch_tags(session)
     except GitHubRequestError as e:
         logger.error(f"Failed to fetch tags: {e}")
         return None
+
+    if not tags:
+        logger.warning("No tags found in the repository.")
+        return None
+
+    requested = (requested or "latest").strip()
+
+    if requested != "latest" and requested in tags:
+        if is_prerelease(requested):
+            logger.warning(f"{requested} is a pre-release; converting it because it was asked for by name.")
+        logger.info(f"Using the requested tag: {requested}")
+        return requested
+
+    # Candidates are stable versions only. A pre-release is reachable by naming
+    # it exactly, which is the branch above.
+    candidates = [
+        tag for tag in tags
+        if _version_key(tag) is not None and not is_prerelease(tag)
+    ]
+    if requested != "latest":
+        candidates = [tag for tag in candidates if tag.startswith(requested)]
+
+    if not candidates:
+        logger.error(
+            f"No stable tag matches {requested!r}. Upstream tags that are versions: "
+            f"{sorted((t for t in tags if _version_key(t)), key=_version_key)[-5:]}"
+        )
+        return None
+
+    resolved = max(candidates, key=_version_key)
+    logger.info(f"Resolved {requested!r} to {resolved}")
+    return resolved
 
 
 def fetch_rule_files(session: requests.Session, ref: str) -> List[Dict[str, str]]:
@@ -359,7 +441,8 @@ def main():
     parser.add_argument("--output", type=str, default="owasp_rules.json",
                         help="Output JSON file path.")
     parser.add_argument("--ref", type=str, default=GITHUB_REF,
-                        help="Git reference (tag or branch prefix).  E.g., 'v4.0', 'v3.3', 'dev'")
+                        help="'latest' for the newest stable release, an exact tag such as "
+                             "'v4.29.0' to pin a build, or a version prefix such as 'v4'.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Simulate fetching and processing (no file save).")
     args = parser.parse_args()
@@ -367,16 +450,18 @@ def main():
     session = get_session()  # Create a requests session
 
     # 1. Fetch the latest tag (or use the provided ref directly)
-    latest_ref = fetch_latest_tag(session, args.ref)
+    latest_ref = resolve_ref(session, args.ref)
     if not latest_ref:
-        logger.error("Could not determine the latest tag. Exiting.")
-        return  # Exit if we can't get a ref
+        # Returning quietly here left the previous owasp_rules.json in place and
+        # let the rest of the pipeline rebuild from stale input.
+        logger.error(f"Could not resolve {args.ref!r} to an upstream tag.")
+        return 1
 
     # 2. Fetch the list of rule files.
     rule_files = fetch_rule_files(session, latest_ref)
     if not rule_files:
-        logger.error("Could not fetch the list of rule files. Exiting.")
-        return
+        logger.error(f"Could not fetch the rule files at {latest_ref}.")
+        return 1
 
     # 3. Fetch and process the rules (in parallel).
     rules = fetch_owasp_rules(session, rule_files)
@@ -386,11 +471,13 @@ def main():
     if not args.dry_run:
         if rules:
             if save_as_json(rules, args.output, build_provenance(ref_name)):
-                logger.info("Successfully saved rules to JSON.")
+                logger.info(f"Saved {len(rules)} rules from {ref_name} to {args.output}.")
             else:
                 logger.error("Failed to save rules to JSON.") # if the save fail
+                return 1
         else:
-            logger.warning("No rules were extracted.")  # Warn if no rules
+            logger.error("No rules were extracted.")
+            return 1
     else:
         logger.info("Dry-run mode:  Rules were fetched and processed, but not saved.")
         # Optionally print some of the extracted rules here for verification.
@@ -398,5 +485,8 @@ def main():
             logger.info(f"Example rule: {rules[0]}")
 
 
+    return 0
+
+
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
