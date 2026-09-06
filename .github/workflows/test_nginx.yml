@@ -1,4 +1,4 @@
-name: Nginx patterns validation
+name: Patterns validation
 
 permissions:
   contents: read  # Needed to read repository contents (e.g., WAF rules)
@@ -24,11 +24,17 @@ jobs:
       with:
         python-version: "3.11"
 
+    - name: Install dependencies
+      run: pip install -r requirements.txt
+
     - name: Install nginx
       run: |
         sudo apt-get update
         sudo apt-get install -y nginx
         nginx -v
+
+    - name: Resolve the upstream reference correctly
+      run: python3 tests/test_resolve_ref.py
 
     # This job used to validate with crossplane, a Python nginx parser. A parser
     # checks that a file tokenises; it does not know that `http` cannot nest,
@@ -39,9 +45,7 @@ jobs:
       run: python3 tests/validate_nginx.py
 
     - name: Regenerate from the committed rule set
-      run: |
-        pip install -r requirements.txt
-        python3 json2nginx.py
+      run: python3 json2nginx.py
 
     - name: Validate the regenerated configuration
       run: python3 tests/validate_nginx.py
