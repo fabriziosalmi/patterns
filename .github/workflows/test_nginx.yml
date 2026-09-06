@@ -36,6 +36,9 @@ jobs:
     - name: Resolve the upstream reference correctly
       run: python3 tests/test_resolve_ref.py
 
+    - name: Extract what the SecRule declares
+      run: python3 tests/test_extraction.py
+
     # This job used to validate with crossplane, a Python nginx parser. A parser
     # checks that a file tokenises; it does not know that `http` cannot nest,
     # that a parameter may not exceed 4096 characters, or that `add_header` is

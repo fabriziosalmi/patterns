@@ -254,15 +254,129 @@ def verify_blob_sha(file_sha: str, blob_content_b64: str) -> bool:
     return True
 
 
-def _extract_rule_id(secrule_text: str) -> str:
-    """Extracts the rule ID from a SecRule directive."""
-    match = re.search(r'id:(\d+)', secrule_text)
+_TRANSFORM_RE = re.compile(r"\bt:([A-Za-z0-9_]+)")
+
+
+def _extract_transformations(actions: str) -> List[str]:
+    """
+    Returns the `t:` transformation chain declared by a rule.
+
+    A CRS pattern is written to match a value *after* these have been applied.
+    Matching a raw request against a pattern that expects urlDecodeUni is both
+    a false-negative risk, since an attacker can encode, and a false-positive
+    risk, since the raw form contains characters the decoded one would not.
+    Recording the chain lets a converter decide what it can honestly emit.
+
+    Args:
+        actions: The action list of a SecRule.
+
+    Returns:
+        The transformation names, in order, without the `t:` prefix.
+    """
+    return [t for t in _TRANSFORM_RE.findall(actions) if t != "none"]
+
+
+# SecLang allows one disruptive action per rule. `block` defers to the policy
+# SecDefaultAction sets, which in CRS is what a signature uses; `deny` and
+# `drop` refuse outright. `pass` explicitly does not: the rule runs for its side
+# effects and lets the request through.
+_DISRUPTIVE_ACTIONS = ("allow", "block", "deny", "drop", "pass", "proxy", "redirect")
+
+
+def _split_actions(actions: str) -> List[str]:
+    """
+    Splits an action list on the commas that separate actions.
+
+    A value may itself contain a comma: `msg:'SQL Injection, common exploits'`
+    is one action, not two. Only commas outside single quotes separate.
+
+    Args:
+        actions: The action list of a SecRule.
+
+    Returns:
+        One string per action, stripped.
+    """
+    out: List[str] = []
+    buf: List[str] = []
+    quoted = False
+    for ch in actions:
+        if ch == "'":
+            quoted = not quoted
+        if ch == "," and not quoted:
+            out.append("".join(buf).strip())
+            buf = []
+            continue
+        buf.append(ch)
+    out.append("".join(buf).strip())
+    return [a for a in out if a]
+
+
+def _extract_disruptive_action(actions: str) -> Optional[str]:
+    """
+    Returns the disruptive action a rule declares, or None if it declares none.
+
+    This is what separates a signature from bookkeeping. CRS rule 921170 is
+    `@rx .`, a pattern that matches any character: it exists to count request
+    parameters, declares `pass`, and blocks nothing. Converted into an nginx map
+    without its action it becomes a rule that matches every request with a query
+    string. A converter that does not read this cannot tell the two apart.
+
+    Args:
+        actions: The action list of a SecRule.
+
+    Returns:
+        The action name, or None when the rule inherits SecDefaultAction's.
+    """
+    for action in _split_actions(actions):
+        if action in _DISRUPTIVE_ACTIONS:
+            return action
+    return None
+
+
+def _extract_rule_id(actions: str) -> str:
+    """
+    Extracts the rule ID from the action list.
+
+    Args:
+        actions: The action list of a SecRule.
+
+    Returns:
+        The CRS rule id, or "no_id" when the rule declares none.
+    """
+    match = re.search(r'id:(\d+)', actions)
     return match.group(1) if match else "no_id"
 
+# CRS writes the severity quoted: `severity:'CRITICAL'`. The unquoted form is
+# also legal in SecLang, so both are accepted.
+_SEVERITY_RE = re.compile(r"severity:'?(\w+)'?")
+
+# ModSecurity severities, mapped to the three levels the converters use.
+_SEVERITY_MAP = {
+    "EMERGENCY": "high", "ALERT": "high", "CRITICAL": "high",
+    "ERROR": "medium", "WARNING": "medium",
+    "NOTICE": "low", "INFO": "low", "DEBUG": "low",
+}
+
+
 def _extract_rule_severity(secrule_text: str) -> str:
-    """Extract the severity."""
-    match = re.search(r'severity:(\w+)', secrule_text)
-    return match.group(1) if match else "medium" # Set default to medium
+    """
+    Extract the severity, normalised to high, medium or low.
+
+    The previous pattern was ``severity:(\\w+)``, and ``\\w`` does not match the
+    quote CRS actually writes, so it never matched and every rule fell through
+    to the "medium" default. Every converter reads this value, and the nginx
+    one blocks on "high", so nothing could ever block.
+
+    Args:
+        secrule_text: The full text of a SecRule directive.
+
+    Returns:
+        "high", "medium" or "low"; "medium" when no severity is declared.
+    """
+    match = _SEVERITY_RE.search(secrule_text)
+    if not match:
+        return "medium"
+    return _SEVERITY_MAP.get(match.group(1).upper(), "medium")
 
 
 def _extract_rule_location(secrule_text: str) -> str:
@@ -294,6 +408,10 @@ def _extract_rule_location(secrule_text: str) -> str:
             locations.append("Request-URI")
         elif var == "QUERY_STRING":
             locations.append("Query-String")
+        elif var == "REQUEST_METHOD":
+            locations.append("Request-Method")
+        elif var == "REQUEST_FILENAME":
+            locations.append("Request-Filename")
         elif var in ("REQUEST_LINE", "REQUEST_BODY", "RESPONSE_BODY", "RESPONSE_HEADERS"):
             locations.append(var) # if it has an explicit direct
         # Add more location mappings as needed
@@ -308,29 +426,115 @@ def _extract_rule_location(secrule_text: str) -> str:
     return "UNKNOWN" # default locatioN
 
 
+def _iter_directives(raw_text: str) -> List[str]:
+    """
+    Yields complete SecLang directives, joining backslash continuations.
+
+    A CRS rule spans many lines: the variables and operator on the first, then
+    the action list continued with a trailing backslash on each subsequent one.
+
+        SecRule ARGS "@rx pattern" \\
+            "id:941100,\\
+            phase:2,\\
+            severity:'CRITICAL',\\
+            ..."
+
+    Args:
+        raw_text: The contents of a .conf file.
+
+    Returns:
+        One string per directive, continuations joined.
+    """
+    directives: List[str] = []
+    current: List[str] = []
+    for line in raw_text.splitlines():
+        stripped = line.strip()
+        if not current and not stripped.startswith("Sec"):
+            continue
+        if stripped.endswith("\\"):
+            current.append(stripped[:-1].rstrip())
+            continue
+        current.append(stripped)
+        directives.append(" ".join(current))
+        current = []
+    if current:
+        directives.append(" ".join(current))
+    return directives
+
+
+def _quoted_strings(text: str) -> List[str]:
+    """
+    Returns the double-quoted strings in a directive, in order.
+
+    Scans rather than uses a regular expression, because the action list
+    contains single-quoted values with commas and escaped double quotes.
+
+    Args:
+        text: One directive.
+
+    Returns:
+        The contents of each double-quoted string.
+    """
+    out: List[str] = []
+    i = 0
+    while i < len(text):
+        if text[i] != '"':
+            i += 1
+            continue
+        i += 1
+        buf: List[str] = []
+        while i < len(text):
+            if text[i] == "\\" and i + 1 < len(text):
+                buf.append(text[i:i + 2])
+                i += 2
+                continue
+            if text[i] == '"':
+                break
+            buf.append(text[i])
+            i += 1
+        out.append("".join(buf))
+        i += 1
+    return out
+
+
 def extract_sec_rules(raw_text: str) -> List[Dict[str, str]]:
     """
-    Extracts SecRule patterns and associated metadata from raw text.
-    Now returns a *list of dictionaries*, each representing a SecRule.
+    Extracts SecRule patterns and their metadata.
+
+    The previous version matched `SecRule\\s+.*?"(...)"`, which stops at the
+    first quoted string: the operator. Everything after it was discarded,
+    including the entire action list, so every rule came out with id "no_id"
+    and severity "medium" no matter what CRS declared. Directives are now read
+    whole, continuations and all, and the actions are parsed from the second
+    quoted string.
+
+    Args:
+        raw_text: The contents of a .conf file.
+
+    Returns:
+        One dict per rule, with id, pattern, location, severity,
+        transformations and disruptive action.
     """
     rules = []
-    # Find all SecRule directives (including those spanning multiple lines).
-    for match in re.finditer(r'SecRule\s+.*?"((?:[^"\\]|\\.)+?)"', raw_text, re.DOTALL):
-        secrule_text = match.group(0)  # Full SecRule text
-        pattern = match.group(1).strip().replace("\\\\", "\\")  # Extract and clean pattern
-
-        if not pattern: # if there are not pattern then skipp
+    for directive in _iter_directives(raw_text):
+        if not directive.startswith("SecRule"):
+            continue
+        quoted = _quoted_strings(directive)
+        if not quoted:
             continue
 
-        rule_id = _extract_rule_id(secrule_text)  # Extract rule ID
-        location = _extract_rule_location(secrule_text)  # Extract location
-        severity = _extract_rule_severity(secrule_text)
+        pattern = quoted[0].strip().replace("\\\\", "\\")
+        if not pattern:
+            continue
 
+        actions = quoted[1] if len(quoted) > 1 else ""
         rules.append({
-            "id": rule_id,
+            "id": _extract_rule_id(actions),
             "pattern": pattern,
-            "location": location,
-            "severity": severity
+            "location": _extract_rule_location(directive),
+            "severity": _extract_rule_severity(actions),
+            "transformations": _extract_transformations(actions),
+            "action": _extract_disruptive_action(actions),
         })
     return rules
 
