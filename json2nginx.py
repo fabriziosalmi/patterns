@@ -15,9 +15,14 @@ MAPS_FILE = OUTPUT_DIR / "waf_maps.conf"
 RULES_FILE = OUTPUT_DIR / "waf_rules.conf"
 
 # Unsupported Nginx directives (expand as needed)
-UNSUPPORTED_PATTERNS = [
-    "@pmFromFile",  # No direct file lookups in Nginx map
-]
+# A ModSecurity rule's operator decides whether it can become an nginx regex at
+# all. Only `@rx` is a regular expression; everything else is a numeric
+# comparison, a file lookup, a byte-range check or a libinjection detector, and
+# emitting it as a map key produces an entry that can never match a URI. Of the
+# 646 patterns extracted from CRS, 330 are in that second group, 181 of them
+# `@lt` paranoia-level guards, which are CRS control flow rather than attack
+# signatures.
+CONVERTIBLE_OPERATOR = "@rx"
 
 # --- Logging Setup ---
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -104,11 +109,16 @@ def sanitize_pattern(pattern: str, location: str) -> Optional[str]:
     Sanitizes a pattern for use in an Nginx map directive.
     Returns the sanitized pattern, or None if the pattern is unsupported.
     """
-    # Skip unsupported patterns.
-    for unsupported in UNSUPPORTED_PATTERNS:
-        if unsupported in pattern:
-            logger.warning(f"Skipping unsupported pattern: {pattern}")
-            return None
+    # Skip anything that is not a regular expression.
+    stripped = pattern.strip()
+    if stripped.startswith("@") and not stripped.startswith(CONVERTIBLE_OPERATOR + " "):
+        operator = stripped.split(None, 1)[0]
+        logger.debug(f"Skipping non-regex operator {operator}: {pattern}")
+        return None
+    if stripped.startswith("!"):
+        # A negated operator inverts the match, which a map key cannot express.
+        logger.debug(f"Skipping negated operator: {pattern}")
+        return None
 
     # Sanitize the pattern
     pattern = _sanitize_pattern(pattern)
@@ -120,11 +130,45 @@ def sanitize_pattern(pattern: str, location: str) -> Optional[str]:
     pattern = re.sub(r'\\([.()[\]|?*+{}^$\\])', r'\1', pattern)
     return pattern
 
+# nginx refuses a configuration parameter longer than this. Verified against
+# nginx 1.31.5: a quoted map key of 4096 characters loads, 4097 does not
+# ("too long parameter, probably missing terminating \" character").
+NGINX_MAX_PARAMETER = 4096
+
+# The request component each rule location is matched against.
+LOCATION_VARIABLES = {
+    "request-uri": "$request_uri",
+    "query-string": "$args",
+    "user-agent": "$http_user_agent",
+    "host": "$http_host",
+    "referer": "$http_referer",
+    "content-type": "$http_content_type",
+}
+
+
+def _escape_quotes(pattern: str) -> str:
+    """Escapes double quotes that are not already escaped, for an nginx string."""
+    return re.sub(r'(?<!\\)"', r'\\"', pattern)
+
+
+def _sanitize_name(name: str) -> str:
+    """Reduces a name to what nginx accepts in a variable name."""
+    return re.sub(r"[^a-z0-9_]", "_", name.lower()).strip("_") or "generic"
+
+
+def _map_variable(source_variable: str) -> str:
+    """Names the variable a map writes into, from the variable it reads."""
+    return f"$waf_{_sanitize_name(source_variable.lstrip('$'))}"
+
+
 def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest") -> None:
     """Generates Nginx WAF configuration (maps and rules)."""
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    categorized_rules: Dict[str, Dict[str, str]] = defaultdict(lambda: defaultdict(str)) # category -> location
+    # source variable -> list of "key value" map entries
+    entries_by_variable: Dict[str, List[str]] = defaultdict(list)
+    severities_seen: set = set()
+    skipped_too_long = 0
 
     for rule in rules:
         rule_id = rule.get("id", "no_id")  # Get rule ID
@@ -137,71 +181,133 @@ def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest") -> None:
         if not sanitized_pattern or not validate_regex(sanitized_pattern):
             continue  # Skip invalid or unsupported patterns
 
-
-        if location == "request-uri":
-            variable = "$request_uri"
-        elif location == "query-string":
-            variable = "$args"  #  Use $args for query string
-        elif location == "user-agent":
-            variable = "$http_user_agent"
-        elif location == "host":
-            variable = "$http_host"
-        elif location == "referer":
-            variable = "$http_referer"
-        elif location == "content-type":
-            variable = "$http_content_type"
-        # Add more location mappings here
-        else:
+        variable = LOCATION_VARIABLES.get(location)
+        if variable is None:
             logger.warning(f"Unsupported location: {location} for rule: {rule_id}")
             continue
-        # Add rule based on severity and location
-        categorized_rules[category][variable] += f'  "~*{sanitized_pattern}" {severity};\n' # set severity as value
 
+        # nginx reads the map key as a double-quoted string, so an unescaped
+        # quote inside the pattern ends the token early: the CRS pattern
+        # `charset\s*=\s*["\']?...` produced `unexpected "\'"` and the file
+        # would not load. Escaping is enough; nginx passes through the other
+        # backslash sequences a regex needs, such as \s and \b.
+        key = f'"~*{_escape_quotes(sanitized_pattern)}"'
+        if len(key) > NGINX_MAX_PARAMETER:
+            # nginx refuses a single configuration parameter longer than 4096
+            # characters ("too long parameter"), and one over-long pattern makes
+            # the whole file unloadable. Verified against nginx 1.31.5: the
+            # quoted token including `~*` may be at most 4096 characters.
+            skipped_too_long += 1
+            logger.warning(
+                f"Skipping rule {rule_id}: pattern is {len(key)} characters, "
+                f"over nginx's {NGINX_MAX_PARAMETER}-character parameter limit"
+            )
+            continue
+
+        # The value carries the severity and the category, so an operator can
+        # read $waf_<variable> in a log to see what matched.
+        severities_seen.add(severity)
+        value = f'"{severity}:{_sanitize_name(category)}"'
+        entries_by_variable[variable].append(f"  {key} {value};")
+
+    if skipped_too_long:
+        logger.warning(
+            f"{skipped_too_long} rule(s) skipped for exceeding nginx's parameter limit"
+        )
 
     # --- Generate Maps (waf_maps.conf) ---
+    #
+    # One map per source variable, keyed on the variable its patterns were
+    # written for. Keying every map on `$1`, as this generator used to, meant
+    # every lookup returned the default: `$1` holds a regular expression capture
+    # and nothing sets it here, so the rules matched nothing at all.
+    #
+    # No `http { }` wrapper: this file is included *into* the http context, and
+    # nginx does not allow a nested http block.
     try:
         with open(MAPS_FILE, "w", encoding="utf-8") as f:
             f.write(provenance_header(crs_ref))
-            f.write("# Nginx WAF Maps (Generated by json2nginx.py)\n\n")
-            f.write("http {\n")  #  Maps *must* be in the http context
+            f.write("# Nginx WAF Maps (Generated by json2nginx.py)\n")
+            f.write("#\n")
+            f.write("# Include this file INSIDE your existing `http` block:\n")
+            f.write("#\n")
+            f.write("#   http {\n")
+            f.write("#       include /path/to/waf_patterns/nginx/waf_maps.conf;\n")
+            f.write("#   }\n")
+            f.write("#\n")
+            f.write("# Each map yields \"<severity>:<category>\" on a match, and \"\" otherwise.\n\n")
 
-            for category, location_rules in categorized_rules.items():
-                 # Create the map with the high priority
-                 f.write(f"  map $1 $waf_{category} {{\n") # dynamic variable
-                 f.write('    default "";\n') # default value empty
-                 for location, rules in location_rules.items():
-                     f.write(f"    # Rules for {location}\n")
-                     f.write(rules)  # Write the collected rules for this location
-                     f.write("\n")
-                 f.write("  }\n\n")
+            for variable in sorted(entries_by_variable):
+                name = _map_variable(variable)
+                f.write(f"map {variable} {name} {{\n")
+                f.write('  default "";\n')
+                f.write("\n".join(entries_by_variable[variable]))
+                f.write("\n}\n\n")
 
-            f.write("}\n")  # Close the http block
         logger.info(f"Generated Nginx map file: {MAPS_FILE}")
     except IOError as e:
         logger.error(f"Error writing to {MAPS_FILE}: {e}")
         raise
 
     # --- Generate Rules (waf_rules.conf) ---
+    #
+    # Only `high` blocks. The previous version also emitted `add_header` inside
+    # `if`, which nginx rejects in server context ("add_header directive is not
+    # allowed here"), so the file could not load.
     try:
         with open(RULES_FILE, "w", encoding="utf-8") as f:
             f.write(provenance_header(crs_ref))
-            f.write("# Nginx WAF Rules (Generated by json2nginx.py)\n\n")
-            f.write("# Include this file in your 'server' or 'location' block.\n\n")
+            f.write("# Nginx WAF Rules (Generated by json2nginx.py)\n")
+            f.write("#\n")
+            f.write("# Include this file inside a `server` or `location` block.\n")
+            f.write("# Requires waf_maps.conf to be included in the `http` block.\n")
+            f.write("#\n")
+            variables = [_map_variable(v) for v in sorted(entries_by_variable)]
 
-            # iterate for each rule
-            for category, location_rules in categorized_rules.items():
-                # set map to correct WAF block
-                map_variable = f"$waf_{category}"
-                # create conditions based on priority
-                f.write(f'  if ({map_variable} = "high") {{\n    return 403;\n  }}\n')
-                f.write(f'  if ({map_variable} = "medium") {{\n    add_header X-WAF-Blocked "medium-{category}";\n  }}\n') # example for another action
-                f.write(f'  if ({map_variable} = "low") {{\n     add_header X-WAF-Blocked "low-{category}";\n  }}\n\n') # expample for other action
+            if "high" in severities_seen:
+                f.write("# Requests matching a `high` severity pattern are refused with 403.\n")
+                f.write("# Lower severities are recorded in the variables but do not block:\n")
+                f.write("# they hold \"<severity>:<category>\" and are usable in log_format.\n\n")
+                for name in variables:
+                    f.write(f'if ({name} ~ "^high") {{\n')
+                    f.write("  return 403;\n")
+                    f.write("}\n")
+            else:
+                # Emitting `if` blocks that can never fire would suggest an
+                # enforcement this rule set cannot currently provide.
+                f.write("# NOTHING IS BLOCKED BY THIS FILE.\n")
+                f.write("#\n")
+                f.write("# The rules extracted from the Core Rule Set carry no severity, so no\n")
+                f.write("# pattern reaches the `high` level that would trigger a 403, and no\n")
+                f.write("# blocking directive is emitted rather than one that can never fire.\n")
+                f.write("#\n")
+                f.write("# Matches are still recorded. These variables hold\n")
+                f.write("# \"<severity>:<category>\" when a pattern matches, and \"\" otherwise:\n")
+                f.write("#\n")
+                for name in variables:
+                    f.write(f"#   {name}\n")
+                f.write("#\n")
+                f.write("# Use them in log_format to see what would match your own traffic\n")
+                f.write("# before enforcing anything:\n")
+                f.write("#\n")
+                f.write("#   log_format waf '$remote_addr $request \"$waf_request_uri\" \"$waf_args\"';\n")
+                f.write("#\n")
+                f.write("# To block on any match, uncomment the directives below. Measured\n")
+                f.write("# against a running nginx, that blocks XSS, SQL injection, Log4Shell\n")
+                f.write("# and path traversal, and also refuses an ordinary `?url=` or\n")
+                f.write("# `?email=` parameter. That false-positive profile is what CRS itself\n")
+                f.write("# manages with anomaly scoring, which this project does not have yet.\n")
+                f.write("# Measure first, then decide. See\n")
+                f.write("# https://github.com/fabriziosalmi/patterns/issues/45\n")
+                f.write("#\n")
+                for name in variables:
+                    f.write(f"#   if ({name}) {{ return 403; }}\n")
+
         logger.info(f"Generated Nginx rules file: {RULES_FILE}")
 
     except IOError as e:
         logger.error(f"Error writing to {RULES_FILE}: {e}")
         raise
-
 
     # --- Generate README ---
     readme_file = OUTPUT_DIR / "README.md"
@@ -228,6 +334,14 @@ def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest") -> None:
             f.write("   ```bash\n")
             f.write("   sudo nginx -t && sudo systemctl reload nginx\n")
             f.write("   ```\n\n")
+            f.write("## What this blocks\n\n")
+            f.write("Read the top of `waf_rules.conf`: it says what is enforced.\n\n")
+            f.write("Rules carry a severity, and only `high` blocks. The Core Rule Set\n")
+            f.write("extraction does not currently produce severities, so on a default build\n")
+            f.write("nothing is blocked and matches are only recorded in the `$waf_*`\n")
+            f.write("variables. `waf_rules.conf` carries a ready-to-uncomment blocking\n")
+            f.write("directive, and the measured trade-off of turning it on.\n\n")
+            f.write("Log the variables against your own traffic before enforcing anything.\n\n")
             f.write("## Important Notes:\n\n")
             f.write("* **Testing is Crucial:**  Thoroughly test your WAF configuration with a variety of requests (both legitimate and malicious) to ensure it's working correctly and not causing false positives.\n")
             f.write("* **False Positives:**  WAF rules, especially those based on regex, can sometimes block legitimate traffic.  Monitor your Nginx logs and adjust the rules as needed.\n")

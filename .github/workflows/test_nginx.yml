@@ -2,7 +2,7 @@ name: Nginx patterns validation
 
 permissions:
   contents: read  # Needed to read repository contents (e.g., WAF rules)
-  
+
 on:
   push:
     branches:
@@ -19,74 +19,41 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v7
 
-    - name: Download WAF rules
-      run: |
-        wget https://github.com/fabriziosalmi/patterns/releases/download/latest/nginx_waf.zip -O nginx_waf.zip
-        echo "Downloaded nginx_waf.zip"
-        ls -lh nginx_waf.zip
-
-    - name: Extract WAF rules
-      run: |
-        unzip nginx_waf.zip -d waf_rules
-        echo "Extracted WAF rules into waf_rules directory"
-        ls -lh waf_rules/
-
-    - name: Verify WAF rules extraction
-      run: |
-        if [ -z "$(ls -A waf_rules/*.conf 2>/dev/null)" ]; then
-          echo "Error: No .conf files found in waf_rules/"
-          echo "Contents of waf_rules/:"
-          ls -l waf_rules/
-          exit 1
-        fi
-        echo "Found WAF configuration files:"
-        ls -l waf_rules/*.conf
-
     - name: Set up Python
       uses: actions/setup-python@v7
       with:
-        python-version: "3.9"
+        python-version: "3.11"
 
-    - name: Install crossplane
+    - name: Install nginx
       run: |
-        python -m pip install --upgrade pip
-        pip install crossplane
+        sudo apt-get update
+        sudo apt-get install -y nginx
+        nginx -v
 
-    - name: Validate individual WAF rule files
+    # This job used to validate with crossplane, a Python nginx parser. A parser
+    # checks that a file tokenises; it does not know that `http` cannot nest,
+    # that a parameter may not exceed 4096 characters, or that `add_header` is
+    # not allowed inside an `if` in server context. All three shipped for months
+    # with this job green (#21, #22, #23), so it now runs nginx itself.
+    - name: Validate the committed configuration
+      run: python3 tests/validate_nginx.py
+
+    - name: Regenerate from the committed rule set
       run: |
-        for file in waf_rules/*.conf; do
-          echo "Validating $file..."
-          # Use crossplane to parse and validate the file
-          if ! crossplane parse "$file" > /dev/null; then
-            echo "Error: Validation failed for $file"
-            crossplane parse "$file"  # Print detailed error
-            exit 1
-          fi
-          echo "Validation successful for $file"
-        done
+        pip install -r requirements.txt
+        python3 json2nginx.py
 
-    - name: Merge all WAF rules into a single file
+    - name: Validate the regenerated configuration
+      run: python3 tests/validate_nginx.py
+
+    - name: Fail if the committed output is stale
       run: |
-        echo "Merging all WAF rules into a single file..."
-        echo "http {" > merged_waf_rules.conf
-        for file in waf_rules/*.conf; do
-          echo "Merging $file..."
-          cat "$file" >> merged_waf_rules.conf
-          echo "" >> merged_waf_rules.conf
-        done
-        echo "}" >> merged_waf_rules.conf
-
-        echo "Contents of merged_waf_rules.conf:"
-        cat merged_waf_rules.conf
-
-    - name: Validate merged WAF rules
-      run: |
-        echo "Validating merged WAF rules..."
-        # Use crossplane to parse and validate the merged file
-        if ! crossplane parse merged_waf_rules.conf > /dev/null; then
-          echo "Error: Validation failed for merged_waf_rules.conf"
-          crossplane parse merged_waf_rules.conf  # Print detailed error
+        # The daily workflow commits what the generator produces, so the two
+        # should already agree. A diff here means the committed files were not
+        # regenerated after a generator change.
+        if ! git diff --quiet -- waf_patterns/nginx; then
+          echo "The committed nginx output does not match what the generator produces:"
+          git --no-pager diff --stat -- waf_patterns/nginx
           exit 1
         fi
-        echo "Validation successful for merged_waf_rules.conf"
-
+        echo "Committed output matches the generator."
