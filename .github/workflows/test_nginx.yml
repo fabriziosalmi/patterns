@@ -24,27 +24,28 @@ jobs:
       with:
         python-version: "3.11"
 
+    - name: Install dependencies
+      run: pip install -r requirements.txt
+
     - name: Install nginx
       run: |
         sudo apt-get update
         sudo apt-get install -y nginx
         nginx -v
 
+    - name: Resolve the upstream reference correctly
+      run: python3 tests/test_resolve_ref.py
+
     # This job used to validate with crossplane, a Python nginx parser. A parser
     # checks that a file tokenises; it does not know that `http` cannot nest,
     # that a parameter may not exceed 4096 characters, or that `add_header` is
     # not allowed inside an `if` in server context. All three shipped for months
     # with this job green (#21, #22, #23), so it now runs nginx itself.
-    - name: Resolve the upstream reference correctly
-      run: python3 tests/test_resolve_ref.py
-
     - name: Validate the committed configuration
       run: python3 tests/validate_nginx.py
 
     - name: Regenerate from the committed rule set
-      run: |
-        pip install -r requirements.txt
-        python3 json2nginx.py
+      run: python3 json2nginx.py
 
     - name: Validate the regenerated configuration
       run: python3 tests/validate_nginx.py
