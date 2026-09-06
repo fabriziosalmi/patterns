@@ -7,6 +7,8 @@ from collections import defaultdict
 from functools import lru_cache
 from typing import List, Dict, Optional, Tuple
 
+from corpus import BENIGN, VARIABLE_FIELDS
+
 # --- Configuration ---
 LOG_LEVEL = logging.INFO  # DEBUG, INFO, WARNING, ERROR
 INPUT_FILE = Path(os.getenv("INPUT_FILE", "owasp_rules.json"))
@@ -72,63 +74,98 @@ def provenance_header(crs_ref: str) -> str:
         "#\n"
     )
 
+# The PCRE constructs Python's re does not parse. nginx matches with PCRE and
+# this module checks with Python's re, which is close but not identical, so a
+# handful of valid rules would be discarded as malformed. Each entry rewrites
+# one construct into something Python accepts. The rewrite is used only for the
+# check: what gets emitted is always the pattern CRS wrote.
+_PCRE_ONLY = (
+    # \x{263a}: a hex escape wider than two digits.
+    (re.compile(r"(?<!\\)\\x\{([0-9A-Fa-f]{1,6})\}"),
+     lambda m: ("\\u%04x" if int(m.group(1), 16) <= 0xFFFF else "\\U%08x")
+     % int(m.group(1), 16)),
+    # \z: end of subject. Python spells it \Z.
+    (re.compile(r"(?<!\\)\\z"), lambda m: "\\Z"),
+    # (?<name>...): Python requires (?P<name>...).
+    (re.compile(r"\(\?<([A-Za-z_]\w*)>"), lambda m: "(?P<%s>" % m.group(1)),
+    # (?>...): an atomic group. Python 3.11 has them, earlier versions do not.
+    (re.compile(r"\(\?>"), lambda m: "(?:"),
+)
+
+
+def _python_equivalent(pattern: str) -> str:
+    """Rewrites PCRE-only syntax so Python's re can parse the pattern."""
+    for expression, replacement in _PCRE_ONLY:
+        pattern = expression.sub(replacement, pattern)
+    return pattern
+
+
 @lru_cache(maxsize=256)  # Increased cache size
 def validate_regex(pattern: str) -> bool:
-    """Validates a regex pattern (basic check)."""
+    """Reports whether a pattern is a regular expression nginx could compile."""
     try:
-        re.compile(pattern)
+        re.compile(_python_equivalent(pattern))
         return True
     except re.error as e:
         logger.warning(f"Invalid regex: {pattern} - {e}")
         return False
 
-def _sanitize_pattern(pattern: str) -> str:
-    """Internal helper to clean and escape patterns for Nginx."""
-    pattern = pattern.replace("@rx ", "").strip() # Remove ModSecurity @rx
-     # Remove case-insensitive flag (?i) as Nginx uses ~* for that
-    pattern = re.sub(r"\(\?i\)", "", pattern)
-
-    # Convert $ to \$
-    pattern = pattern.replace("$", r"\$")
-
-    # Convert { or { to {
-    pattern = re.sub(r"&l(?:brace|cub);?", r"{", pattern)
-    pattern = re.sub(r"&r(?:brace|cub);?", r"}", pattern)
-
-    # Remove unnecessary \.*
-    pattern = re.sub(r"\\\.\*", r"\.*", pattern)
-    pattern = re.sub(r"(?<!\\)\.(?![\w])", r"\.", pattern)  # Escape dots
-
-    # Replace non-capturing groups (?:...) with capturing groups (...)
-    pattern = re.sub(r"\(\?:", "(", pattern)
-
-    return pattern
-
 def sanitize_pattern(pattern: str, location: str) -> Optional[str]:
     """
-    Sanitizes a pattern for use in an Nginx map directive.
-    Returns the sanitized pattern, or None if the pattern is unsupported.
+    Returns the regular expression a rule matches with, or None if it has none.
+
+    A ModSecurity operator decides whether a rule is a regular expression at
+    all. Only `@rx` is; the rest are numeric comparisons, phrase lists, file
+    lookups or libinjection detectors, and a map key built from one of those can
+    never match. A negated operator is dropped too: a map key says what matches,
+    not what fails to.
+
+    The expression itself is returned unchanged. nginx hands the contents of a
+    configuration string to PCRE, and PCRE is what CRS writes for, so there is
+    nothing to translate. Verified against nginx 1.31.5, matching against
+    $args: `\\d` matches a digit, `[0-9]` matches a digit, `sel.*from` matches
+    across characters, `foo$` anchors, `\\x{62}` matches a b, and `(?<!no)bad`
+    applies the lookbehind. What needs care is the configuration parser rather
+    than the regex, and that is _escape_for_config's job.
     """
-    # Skip anything that is not a regular expression.
     stripped = pattern.strip()
-    if stripped.startswith("@") and not stripped.startswith(CONVERTIBLE_OPERATOR + " "):
-        operator = stripped.split(None, 1)[0]
-        logger.debug(f"Skipping non-regex operator {operator}: {pattern}")
-        return None
     if stripped.startswith("!"):
         # A negated operator inverts the match, which a map key cannot express.
         logger.debug(f"Skipping negated operator: {pattern}")
         return None
+    if stripped.startswith("@"):
+        if not stripped.startswith(CONVERTIBLE_OPERATOR + " "):
+            operator = stripped.split(None, 1)[0]
+            logger.debug(f"Skipping non-regex operator {operator}: {pattern}")
+            return None
+        stripped = stripped[len(CONVERTIBLE_OPERATOR):].strip()
 
-    # Sanitize the pattern
-    pattern = _sanitize_pattern(pattern)
+    # Every map key is matched case-insensitively or not by the ~ prefix
+    # is_case_insensitive picks, so an inline (?i) is redundant. It is removed
+    # rather than kept because nginx rejects it anywhere but the start.
+    stripped = stripped.replace("(?i)", "").strip()
+    return stripped or None
 
-    # Escape special characters for Nginx map (most importantly, the ~)
-    # We use re.escape, but *selectively* unescape key regex metacharacters.
-    pattern = re.escape(pattern)
-    # Unescape:  \.  \(  \)  \[  \]  \|  \?  \*  \+  \{  \}  \^  \$  \\
-    pattern = re.sub(r'\\([.()[\]|?*+{}^$\\])', r'\1', pattern)
-    return pattern
+
+def is_case_insensitive(pattern: str, transformations: List[str]) -> bool:
+    """
+    Reports whether a rule's pattern should be matched ignoring case.
+
+    CRS patterns are not case-insensitive by default. They are written to run
+    after the transformations the rule declares, and a rule that declares
+    `t:lowercase` is written in lower case because its input will be. Converted
+    without its transformations, such a pattern only matches lower-case attacks
+    unless the match itself ignores case.
+
+    So case-insensitivity is taken from the rule: `(?i)` in the pattern, or a
+    lowercasing transformation. Applying it to every rule instead, which is what
+    emitting `~*` unconditionally did, makes rules match strings their authors
+    excluded on purpose.
+    """
+    if "(?i)" in pattern:
+        return True
+    return any(t in ("lowercase", "cmdline", "normalizepath") for t in transformations)
+
 
 # nginx refuses a configuration parameter longer than this. Verified against
 # nginx 1.31.5: a quoted map key of 4096 characters loads, 4097 does not
@@ -146,9 +183,21 @@ LOCATION_VARIABLES = {
 }
 
 
-def _escape_quotes(pattern: str) -> str:
-    """Escapes double quotes that are not already escaped, for an nginx string."""
-    return re.sub(r'(?<!\\)"', r'\\"', pattern)
+def _escape_for_config(pattern: str) -> str:
+    """
+    Escapes a regular expression so nginx's parser hands PCRE what CRS wrote.
+
+    Inside a double-quoted string nginx consumes the backslash in `\\\\`, `\\"` and
+    `\\'` and leaves every other backslash alone. Verified against nginx 1.31.5:
+    a key written `"a\\\\b"` matches a word boundary, `"a\\\\\\\\b"` matches a
+    literal backslash, and `"say\\"hi"` matches say"hi. So a pattern that means
+    to match a literal backslash has to arrive with its backslashes doubled, and
+    a quote has to arrive escaped.
+
+    Backslashes are doubled first: the backslash added in front of a quote is
+    one nginx is meant to consume, not one PCRE should see.
+    """
+    return pattern.replace("\\", "\\\\").replace('"', '\\"')
 
 
 def _sanitize_name(name: str) -> str:
@@ -161,6 +210,95 @@ def _map_variable(source_variable: str) -> str:
     return f"$waf_{_sanitize_name(source_variable.lstrip('$'))}"
 
 
+# A rule that does not refuse the request is not a signature. CRS runs plenty of
+# rules for their side effects: 921170 is `@rx .`, a pattern matching any
+# character, and it exists to count repeated parameter names. Emitted into a map
+# it matches every request that carries a query string.
+BLOCKING_ACTIONS = ("block", "deny", "drop")
+
+
+def blocks(rule: Dict) -> bool:
+    """
+    Reports whether a rule refuses the request, or only records something.
+
+    A rule that declares no disruptive action inherits SecDefaultAction, which
+    CRS sets to `pass`, so it does not block either.
+
+    A rules file written before owasp2json.py recorded this field has no such
+    key at all. Absence of the field is not evidence of `pass`, so those rules
+    are kept: the alternative is that upgrading the converter ahead of the data
+    silently empties the output.
+    """
+    if "action" not in rule:
+        return True
+    return rule["action"] in BLOCKING_ACTIONS
+
+
+def fires_on_ordinary_traffic(pattern: str, variable: str,
+                              ignore_case: bool) -> Optional[str]:
+    """
+    Returns the name of the first ordinary request a pattern matches, or None.
+
+    This is the check that decides what may be emitted. A converted rule has
+    lost the transformations it was written to run after, so a pattern that is
+    precise against a decoded value can be indiscriminate against a raw one:
+    920230 is `%[0-9a-fA-F]{2}` with `t:urlDecodeUni`, which means "still
+    percent-encoded after one decode", that is, double encoding. Against a raw
+    URI it means "contains a percent-encoded character", which is most ordinary
+    URLs. Whether a given rule survives that loss cannot be reasoned about rule
+    by rule, so it is measured against corpus.BENIGN.
+
+    Python's re stands in for PCRE here. The two differ on syntax, which
+    validate_regex already handles, not on what these patterns match.
+
+    Args:
+        pattern: The regular expression, as it will be emitted.
+        variable: The nginx variable the map is keyed on.
+        ignore_case: Whether the map key will carry the `~*` prefix.
+
+    Returns:
+        The `name` of the first matching benign request, or None if it matches
+        none of them.
+    """
+    field = VARIABLE_FIELDS.get(variable)
+    if field is None:
+        return None
+    try:
+        expression = re.compile(_python_equivalent(pattern),
+                                re.IGNORECASE if ignore_case else 0)
+    except re.error:
+        return None
+    for entry in BENIGN:
+        if expression.search(entry[field]):
+            return entry["name"]
+    return None
+
+
+def exclusion_report(not_blocking: int, too_long: int,
+                     noisy: List[Tuple[str, str, str]]) -> str:
+    """
+    Describes, in the generated file, what was left out of it and why.
+
+    A converter that drops rules silently is how this output came to load
+    cleanly and block nothing. An operator reading the file should be able to
+    see the size of what is missing without running the generator.
+    """
+    lines = ["# Rules deliberately not emitted:\n"]
+    if not_blocking:
+        lines.append(f"#   {not_blocking} record rather than refuse "
+                     "(they declare pass, or inherit it)\n")
+    if too_long:
+        lines.append(f"#   {too_long} exceed nginx's 4096-character parameter limit\n")
+    if noisy:
+        lines.append(f"#   {len(noisy)} match ordinary traffic once converted, "
+                     "so they cannot block:\n")
+        for rule_id, category, ordinary in noisy:
+            lines.append(f"#     {rule_id} ({category}) matches: {ordinary}\n")
+    if len(lines) == 1:
+        return "# No rules were excluded.\n"
+    return "".join(lines)
+
+
 def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest") -> None:
     """Generates Nginx WAF configuration (maps and rules)."""
 
@@ -169,6 +307,8 @@ def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest") -> None:
     entries_by_variable: Dict[str, List[str]] = defaultdict(list)
     severities_seen: set = set()
     skipped_too_long = 0
+    skipped_not_blocking = 0
+    excluded_as_noisy: List[Tuple[str, str, str]] = []
 
     for rule in rules:
         rule_id = rule.get("id", "no_id")  # Get rule ID
@@ -186,12 +326,25 @@ def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest") -> None:
             logger.warning(f"Unsupported location: {location} for rule: {rule_id}")
             continue
 
+        if not blocks(rule):
+            skipped_not_blocking += 1
+            continue
+
         # nginx reads the map key as a double-quoted string, so an unescaped
         # quote inside the pattern ends the token early: the CRS pattern
         # `charset\s*=\s*["\']?...` produced `unexpected "\'"` and the file
-        # would not load. Escaping is enough; nginx passes through the other
-        # backslash sequences a regex needs, such as \s and \b.
-        key = f'"~*{_escape_quotes(sanitized_pattern)}"'
+        # would not load.
+        ignore_case = is_case_insensitive(pattern, rule.get("transformations") or [])
+
+        # Measured, not assumed: a rule that refuses ordinary traffic is not
+        # emitted, whatever its severity says.
+        ordinary = fires_on_ordinary_traffic(sanitized_pattern, variable, ignore_case)
+        if ordinary is not None:
+            excluded_as_noisy.append((rule_id, category, ordinary))
+            continue
+
+        prefix = "~*" if ignore_case else "~"
+        key = f'"{prefix}{_escape_for_config(sanitized_pattern)}"'
         if len(key) > NGINX_MAX_PARAMETER:
             # nginx refuses a single configuration parameter longer than 4096
             # characters ("too long parameter"), and one over-long pattern makes
@@ -214,6 +367,15 @@ def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest") -> None:
         logger.warning(
             f"{skipped_too_long} rule(s) skipped for exceeding nginx's parameter limit"
         )
+    if skipped_not_blocking:
+        logger.info(
+            f"{skipped_not_blocking} rule(s) skipped: they record rather than refuse"
+        )
+    for rule_id, category, ordinary in excluded_as_noisy:
+        logger.warning(
+            f"Excluding rule {rule_id} ({category}): it matches an ordinary "
+            f"request ({ordinary})"
+        )
 
     # --- Generate Maps (waf_maps.conf) ---
     #
@@ -235,7 +397,11 @@ def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest") -> None:
             f.write("#       include /path/to/waf_patterns/nginx/waf_maps.conf;\n")
             f.write("#   }\n")
             f.write("#\n")
-            f.write("# Each map yields \"<severity>:<category>\" on a match, and \"\" otherwise.\n\n")
+            f.write("# Each map yields \"<severity>:<category>\" on a match, and \"\" otherwise.\n")
+            f.write("#\n")
+            f.write(exclusion_report(skipped_not_blocking, skipped_too_long,
+                                     excluded_as_noisy))
+            f.write("\n")
 
             for variable in sorted(entries_by_variable):
                 name = _map_variable(variable)

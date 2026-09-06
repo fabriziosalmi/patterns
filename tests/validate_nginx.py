@@ -92,7 +92,7 @@ def main() -> int:
     if result.returncode == 0:
         entries = sum(
             1 for line in maps_file.read_text().splitlines()
-            if line.strip().startswith('"~*')
+            if line.strip().startswith('"~')
         )
         maps = sum(
             1 for line in maps_file.read_text().splitlines()
