@@ -53,6 +53,12 @@ jobs:
     - name: Validate the regenerated configuration
       run: python3 tests/validate_nginx.py
 
+    # validate_nginx.py proves the file loads. Loading was never the hard part:
+    # the released configuration loaded and blocked nothing (#44). This sends
+    # real traffic through nginx and checks what happens to it.
+    - name: Refuse attacks, and nothing else
+      run: python3 tests/test_nginx_blocking.py
+
     - name: Fail if the committed output is stale
       run: |
         # The daily workflow commits what the generator produces, so the two

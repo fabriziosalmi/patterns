@@ -34,7 +34,55 @@ The OWASP Core Rule Set (CRS) is the de-facto open-source rule base behind ModSe
 2. Convert them into the **native** syntax of each web server &mdash; not a generic shim.
 3. Package the output as ready-to-deploy archives, refreshed every day by GitHub Actions.
 
-You get equivalent protection across SQL injection, XSS, RCE, LFI, and bad-bot traffic, regardless of which proxy you run.
+The output covers SQL injection, XSS, RCE, LFI, RFI and protocol violations. What it stops is measured, not claimed: see [What this catches](#what-this-catches).
+
+## What this catches
+
+A ModSecurity rule is not only a regular expression. It also carries a
+transformation chain (`t:urlDecodeUni`, `t:htmlEntityDecode`, ...) that the
+pattern is written to run *after*, and an anomaly score that lets several weak
+signals accumulate before anything is refused. An `nginx` `map` has neither. It
+matches one regex against one raw request component, and that is all it can do.
+
+So the converted rule set is measured against ordinary traffic and against
+attacks, with `nginx` itself, by [`tests/test_nginx_blocking.py`](tests/test_nginx_blocking.py).
+Against CRS v4.29.0, 174 emitted rules, 38 ordinary requests and 21 attacks
+([`corpus.py`](corpus.py)):
+
+| | |
+|---|---|
+| Ordinary requests refused | **0 of 38** |
+| Attacks refused, sent in clear | **14 of 21** |
+| Attacks refused, percent-encoded | **3 of 21** |
+
+The gap between the last two rows is the transformation chain. `nginx` cannot
+url-decode inside a `map`, so a pattern written to run after `t:urlDecodeUni`
+sees `%3Cscript%3E` where CRS would have seen `<script>`. Everything that
+depends on decoding is caught in clear and missed encoded.
+
+Three further limits, all visible in the header of the generated
+`waf_maps.conf`:
+
+- **Rules that would refuse ordinary traffic are not emitted.** Converted
+  without its transformations, CRS 920230 (`%[0-9a-fA-F]{2}`, `t:urlDecodeUni`)
+  means "still percent-encoded after one decode", that is, double encoding.
+  Against a raw URI it means "contains a percent-encoded character", which is
+  most URLs. Seven such rules are excluded, each named in the generated file.
+- **Rules that record rather than refuse are not emitted.** CRS 921170 is
+  `@rx .`, matches any character, declares `pass`, and exists to count repeated
+  parameter names.
+- **Only `@rx` converts.** `@detectSQLi` and `@detectXSS` are libinjection,
+  `@pmFromFile` is a word list, `@lt`/`@ge` are anomaly-score comparisons.
+  None of them is a regular expression, so none can become a `map` key. That is
+  why a scanner User-Agent and a request for `/.env` pass: CRS catches both with
+  `@pmFromFile`.
+
+This is a useful first filter in front of an application, and it is not a
+replacement for a WAF that can apply transformations and keep score. If you need
+that on `nginx`, use ModSecurity; on Caddy, see
+[`caddy-waf`](https://github.com/fabriziosalmi/caddy-waf).
+
+The other three backends have not been measured this way yet.
 
 ## Highlights
 
