@@ -44,6 +44,9 @@ jobs:
     # that a parameter may not exceed 4096 characters, or that `add_header` is
     # not allowed inside an `if` in server context. All three shipped for months
     # with this job green (#21, #22, #23), so it now runs nginx itself.
+    - name: Pin the parameter limit to what nginx accepts
+      run: python3 tests/test_parameter_limit.py
+
     - name: Validate the committed configuration
       run: python3 tests/validate_nginx.py
 

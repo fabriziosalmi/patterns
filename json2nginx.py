@@ -167,10 +167,29 @@ def is_case_insensitive(pattern: str, transformations: List[str]) -> bool:
     return any(t in ("lowercase", "cmdline", "normalizepath") for t in transformations)
 
 
-# nginx refuses a configuration parameter longer than this. Verified against
-# nginx 1.31.5: a quoted map key of 4096 characters loads, 4097 does not
-# ("too long parameter, probably missing terminating \" character").
-NGINX_MAX_PARAMETER = 4096
+# nginx refuses a configuration parameter longer than this, in bytes.
+#
+# One over-long parameter is not one lost rule: nginx refuses the file, so the
+# whole rule set stops loading. That failure shipped once already (#22), which
+# is why the limit is measured rather than assumed.
+#
+# The previous value, 4096, was one above the boundary, and the comparison
+# against it emitted a key nginx refuses. Binary-searched with `nginx -t`, on
+# nginx 1.31.5 and on the nginx the Ubuntu runners install: 4095 bytes loads,
+# 4096 does not ("too long parameter, probably missing terminating \"
+# character"). The limit is on the parameter, not the line: a 4095-byte key
+# loads on a line of 4508 characters.
+#
+# tests/test_parameter_limit.py binary-searches the local nginx for the same
+# boundary and fails if this constant is above it, so a stricter build is caught
+# rather than assumed away with a margin.
+#
+# The limit counts bytes, and a Python string counts characters. The two agree
+# for every pattern CRS writes in a .conf file, which spells non-ASCII as
+# `\x{...}`, but not for the .data files behind `@pmFromFile`: ssrf.data
+# contains `\u2460` and `\u3002`, three bytes each. Measuring in characters
+# there produces a key that passes this check and takes the file down.
+NGINX_MAX_PARAMETER = 4095
 
 # The request component each rule location is matched against.
 LOCATION_VARIABLES = {
@@ -345,15 +364,15 @@ def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest") -> None:
 
         prefix = "~*" if ignore_case else "~"
         key = f'"{prefix}{_escape_for_config(sanitized_pattern)}"'
-        if len(key) > NGINX_MAX_PARAMETER:
+        if len(key.encode("utf-8")) > NGINX_MAX_PARAMETER:
             # nginx refuses a single configuration parameter longer than 4096
             # characters ("too long parameter"), and one over-long pattern makes
             # the whole file unloadable. Verified against nginx 1.31.5: the
             # quoted token including `~*` may be at most 4096 characters.
             skipped_too_long += 1
             logger.warning(
-                f"Skipping rule {rule_id}: pattern is {len(key)} characters, "
-                f"over nginx's {NGINX_MAX_PARAMETER}-character parameter limit"
+                f"Skipping rule {rule_id}: key is {len(key.encode('utf-8'))} "
+                f"bytes, over nginx's {NGINX_MAX_PARAMETER}-byte parameter limit"
             )
             continue
 
