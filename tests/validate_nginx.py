@@ -83,6 +83,12 @@ def main() -> int:
     for line_number, length in over_limit:
         print(f"      {maps_file.name}:{line_number} is {length} bytes")
 
+    # Guard against empty maps file to avoid misleading nginx diagnostics
+    maps_content = maps_file.read_text()
+    if not any(line.strip() for line in maps_content.splitlines()):
+        print(f"FAIL  {maps_file} is empty")
+        return 1
+
     with tempfile.TemporaryDirectory() as tmp:
         workdir = Path(tmp)
         conf = workdir / "nginx.conf"
@@ -94,11 +100,11 @@ def main() -> int:
 
     if result.returncode == 0:
         entries = sum(
-            1 for line in maps_file.read_text().splitlines()
+            1 for line in maps_content.splitlines()
             if line.strip().startswith('"~')
         )
         maps = sum(
-            1 for line in maps_file.read_text().splitlines()
+            1 for line in maps_content.splitlines()
             if line.startswith("map ")
         )
         print(f"ok    nginx accepts the generated configuration "
