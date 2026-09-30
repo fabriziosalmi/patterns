@@ -239,8 +239,9 @@ check("every identity the documentation tells people to verify is the workflow's
 check("and the release notes say the same",
       sorted(set(re.findall(r"--certificate-identity\s+(\S+)", workflow))
              - {"\"$IDENTITY\""}), [IDENTITY])
-check("issued by GitHub Actions",
-      "https://token.actions.githubusercontent.com" in docs, True)
+check("issued by GitHub Actions, every time",
+      sorted(set(re.findall(r"--certificate-oidc-issuer\s+(\S+)", docs))),
+      ["https://token.actions.githubusercontent.com"])
 check("and the workflow file it names is the one that is here",
       (REPO_ROOT / ".github" / "workflows" / IDENTITY.split("/workflows/")[1].split("@")[0]).is_file(), True)
 
