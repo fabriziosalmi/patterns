@@ -46,13 +46,13 @@ matches one regex against one raw request component, and that is all it can do.
 
 So the converted rule set is measured against ordinary traffic and against
 attacks, with `nginx` itself, by [`tests/test_nginx_blocking.py`](tests/test_nginx_blocking.py).
-Against the rules in this repository (the nginx row of the table below), 108
+Against the rules in this repository (the nginx row of the table below), 109
 ordinary requests in ten categories of what a false positive looks like, and 21
 attacks ([`patterns/corpus.py`](patterns/corpus.py)):
 
 | | |
 |---|---|
-| Ordinary requests refused | **0 of 108** |
+| Ordinary requests refused | **0 of 109** |
 | Attacks refused, sent in clear | **14 of 21** |
 | Attacks refused, percent-encoded | **3 of 21** |
 

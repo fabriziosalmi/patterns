@@ -126,6 +126,12 @@ check("an address is in a documentation range",
                                 r"python-requests|curl|Prometheus|orders-service|bingbot|Googlebot)[/ :]"
                                 + re.escape(a), " ".join(everything))}), [])
 
+print("what the README says")
+readme = (REPO_ROOT / "README.md").read_text()
+check("the README counts the ordinary requests it is measured against",
+      sorted({int(n) for n in re.findall(r"(\d+)\s+ordinary requests in", readme)
+              + re.findall(r"refused \| \*\*0 of (\d+)\*\*", readme)}), [len(BENIGN)])
+
 print(f"\n{checks - failures}/{checks} checks passed")
 print(f"{len(BENIGN)} ordinary requests in {len(counts)} categories: "
       + ", ".join(f"{c} {n}" for c, n in sorted(counts.items())))
