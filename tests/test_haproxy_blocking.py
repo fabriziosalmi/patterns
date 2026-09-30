@@ -86,6 +86,10 @@ def exercise(waf_dir: Path, modes: Dict[str, Dict], check: c.Checker) -> None:
     for mode, expected in modes.items():
         with tempfile.TemporaryDirectory() as tmp:
             workdir = Path(tmp)
+            # The image runs haproxy as an unprivileged user, and a temporary
+            # directory is private to the one that made it: on Linux the
+            # configuration cannot be opened ("Permission denied").
+            workdir.chmod(0o755)
             (workdir / f"{mode}.cfg").write_text(configuration(mode, waf_dir))
             volumes = {workdir: "/cfg", waf_dir.resolve(): "/waf"}
             checked = c.run_once(IMAGE, ["haproxy", "-c", "-f", f"/cfg/{mode}.cfg"], volumes)
