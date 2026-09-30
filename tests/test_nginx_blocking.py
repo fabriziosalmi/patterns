@@ -30,6 +30,7 @@ Usage:
 `directory` defaults to waf_patterns/nginx. Requires the `nginx` binary.
 """
 
+import re
 import shutil
 import subprocess
 import sys
@@ -144,6 +145,20 @@ def main() -> int:
             print(f"  FAIL  {label}: {len(caught)} refused, floor is {floor}")
     if not failures:
         print("  ok    both above the floor")
+
+    # The rules the corpus kept out, and the request each one matched. A rule is
+    # only excluded because an ordinary request matched it, so each line is a
+    # decision to check: was the request ordinary, or was the rule wrong?
+    excluded = re.findall(r"^#\s+(\S+) \(([^)]+)\) matches: (.+)$", maps_file.read_text(), re.M)
+    by_name = {e["name"]: e for e in BENIGN}
+    print(f"\nrules kept out because they match ordinary traffic ({len(excluded)})")
+    for rule_id, category, name in excluded:
+        entry = by_name.get(name)
+        if entry is None:
+            failures += 1
+            print(f"  FAIL  {rule_id} names a request that is not in the corpus: {name}")
+            continue
+        print(f"        {rule_id} ({category}) matches {name!r}: {entry['why']}")
 
     print("\nnot caught in clear:")
     for entry in ATTACKS:

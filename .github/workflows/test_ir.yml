@@ -70,6 +70,11 @@ jobs:
     - name: Test the coverage matrix
       run: python3 tests/test_coverage.py
 
+    # The corpus of ordinary traffic every candidate rule is checked against: each
+    # entry says what it is and why, and nothing in it is real.
+    - name: Test the corpus of ordinary traffic
+      run: python3 tests/test_corpus.py
+
     # What changed between two versions of the rules, rule by rule and target by
     # target.
     - name: Test the diff between releases

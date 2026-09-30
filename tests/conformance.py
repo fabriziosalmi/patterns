@@ -65,8 +65,10 @@ def send(port: int, entry: Dict[str, str], refused: int = 403) -> int:
         headers["Referer"] = entry["referer"]
     if entry["content_type"]:
         headers["Content-Type"] = entry["content_type"]
+    body = entry.get("body") or None
     try:
-        connection.request("GET", entry["request_uri"], headers=headers)
+        connection.request(entry.get("method") or "GET", entry["request_uri"],
+                           body=body.encode("utf-8") if body else None, headers=headers)
         return connection.getresponse().status
     finally:
         connection.close()

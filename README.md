@@ -46,12 +46,13 @@ matches one regex against one raw request component, and that is all it can do.
 
 So the converted rule set is measured against ordinary traffic and against
 attacks, with `nginx` itself, by [`tests/test_nginx_blocking.py`](tests/test_nginx_blocking.py).
-Against the rules in this repository (the nginx row of the table below), 38
-ordinary requests and 21 attacks ([`patterns/corpus.py`](patterns/corpus.py)):
+Against the rules in this repository (the nginx row of the table below), 108
+ordinary requests in ten categories of what a false positive looks like, and 21
+attacks ([`patterns/corpus.py`](patterns/corpus.py)):
 
 | | |
 |---|---|
-| Ordinary requests refused | **0 of 38** |
+| Ordinary requests refused | **0 of 108** |
 | Attacks refused, sent in clear | **14 of 21** |
 | Attacks refused, percent-encoded | **3 of 21** |
 
@@ -67,7 +68,10 @@ Three further limits, all visible in the header of the generated
   without its transformations, CRS 920230 (`%[0-9a-fA-F]{2}`, `t:urlDecodeUni`)
   means "still percent-encoded after one decode", that is, double encoding.
   Against a raw URI it means "contains a percent-encoded character", which is
-  most URLs. Seven such rules are excluded, each named in the generated file.
+  most URLs. Such rules are excluded, each named in the generated file with the
+  request that matched it, and again in the test output. Adding a request to the
+  corpus can exclude more: that is what it is for, and what a reported false
+  positive should do first (see CONTRIBUTING).
 - **Rules that record rather than refuse are not emitted.** CRS 921170 is
   `@rx .`, matches any character, declares `pass`, and exists to count repeated
   parameter names.
@@ -95,7 +99,7 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 
 | Target | Full | Approximate | Unsound | Dropped |
 |---|---:|---:|---:|---:|
-| Nginx | 13 | 161 | 0 | 575 |
+| Nginx | 12 | 156 | 0 | 581 |
 | Apache (ModSecurity) | 0 | 1 | 712 | 36 |
 | Traefik | 0 | 1 | 6 | 742 |
 | HAProxy | 2 | 97 | 403 | 247 |
@@ -109,18 +113,18 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 | not a rule: it changes another rule | 54 |  | 54 | 54 |
 | the expression does not compile |  | 15 |  | 2 |
 | longer than the target accepts | 16 |  |  |  |
-| it refuses ordinary traffic once converted | 7 |  |  |  |
+| it refuses ordinary traffic once converted | 13 |  |  |  |
 | it records and does not refuse | 4 |  |  |  |
 
 **What a written rule loses**, in how many of them:
 
 | Loss | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
 |---|---:|---:|---:|---:|
-| matched on other variables than the rule names | 154 | 633 | 3 | 480 |
+| matched on other variables than the rule names | 149 | 633 | 3 | 480 |
 | an operator written as something it is not |  | 373 | 2 | 301 |
-| transformations the rule was written to run after are not applied | 120 | 184 | 2 | 136 |
+| transformations the rule was written to run after are not applied | 115 | 184 | 2 | 136 |
 | the expression was rewritten |  | 281 | 3 | 100 |
-| a chain written without all of its links | 15 | 121 | 3 | 56 |
+| a chain written without all of its links | 13 | 121 | 3 | 56 |
 | written although it is not a rule |  | 54 |  |  |
 | case-insensitivity is not honoured |  |  | 3 |  |
 <!-- coverage:end -->

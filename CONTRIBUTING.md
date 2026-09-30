@@ -93,6 +93,25 @@ We welcome pull requests! Here's how to submit one:
    - Provide a clear title and description of your changes
    - Reference any related issues
 
+### Reporting or fixing a false positive
+
+A rule that refuses ordinary traffic is an outage, and what keeps it out of the output is
+`patterns/corpus.py`: the nginx backend does not emit a rule that matches a request in
+`BENIGN`. So a false positive starts as an entry there, not as a change to a rule:
+
+1. Add the request to `BENIGN` with `benign(category, name, why, path, query, ...)`. Pick the
+   category it is an instance of (`CATEGORIES`), and write one line on why it is there: what it
+   could be mistaken for.
+2. Make it up, or take it from public documentation. Never paste real traffic: hosts are
+   `example.*`, people are `@example.com`, addresses are in the documentation ranges.
+   `tests/test_corpus.py` checks this.
+3. Run `python3 tests/test_nginx_blocking.py` **before rebuilding**. The output in the
+   repository was built without your request, so the test fails and names it: that is the false
+   positive, reproduced. (`name=O'Brien+and+sons` was refused by CRS 942521 until it was added.)
+4. Rebuild (`python3 -m patterns build --all`) and run the test again. It passes, and the rule
+   that refused your request is listed under "rules kept out because they match ordinary
+   traffic", with the request next to it. Commit the entry and the rebuilt output together.
+
 ## Code Style Guidelines
 
 - Use Python 3.11 or higher

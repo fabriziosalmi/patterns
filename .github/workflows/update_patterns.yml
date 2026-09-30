@@ -111,6 +111,7 @@ jobs:
     - name: 🚦 What each target does with each rule
       run: |
         { python3 tests/test_coverage.py \
+          && python3 tests/test_corpus.py \
           && python3 tests/test_diff.py \
           && python3 tests/test_cli.py; } 2>&1 | tee -a gate.log
 

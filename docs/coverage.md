@@ -9,7 +9,7 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 
 | Target | Full | Approximate | Unsound | Dropped |
 |---|---:|---:|---:|---:|
-| Nginx | 13 | 161 | 0 | 575 |
+| Nginx | 12 | 156 | 0 | 581 |
 | Apache (ModSecurity) | 0 | 1 | 712 | 36 |
 | Traefik | 0 | 1 | 6 | 742 |
 | HAProxy | 2 | 97 | 403 | 247 |
@@ -23,18 +23,18 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 | not a rule: it changes another rule | 54 |  | 54 | 54 |
 | the expression does not compile |  | 15 |  | 2 |
 | longer than the target accepts | 16 |  |  |  |
-| it refuses ordinary traffic once converted | 7 |  |  |  |
+| it refuses ordinary traffic once converted | 13 |  |  |  |
 | it records and does not refuse | 4 |  |  |  |
 
 **What a written rule loses**, in how many of them:
 
 | Loss | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
 |---|---:|---:|---:|---:|
-| matched on other variables than the rule names | 154 | 633 | 3 | 480 |
+| matched on other variables than the rule names | 149 | 633 | 3 | 480 |
 | an operator written as something it is not |  | 373 | 2 | 301 |
-| transformations the rule was written to run after are not applied | 120 | 184 | 2 | 136 |
+| transformations the rule was written to run after are not applied | 115 | 184 | 2 | 136 |
 | the expression was rewritten |  | 281 | 3 | 100 |
-| a chain written without all of its links | 15 | 121 | 3 | 56 |
+| a chain written without all of its links | 13 | 121 | 3 | 56 |
 | written although it is not a rule |  | 54 |  |  |
 | case-insensitivity is not honoured |  |  | 3 |  |
 <!-- coverage:end -->
