@@ -57,6 +57,10 @@ The numbers are counted on the records of the [intermediate representation](/ir)
 - **Anomaly scoring.** CRS adds points for each rule that matches and refuses when the total passes a threshold. Every target here decides rule by rule, so a rule that would only have contributed points acts alone. This applies to all of them and is not counted as a loss.
 - **What a rule does when it matches.** Deny, log, tarpit or record is chosen by severity or by the target, and is not part of a status.
 
+## Does it load?
+
+Whether a rule is written, and whether the server accepts what was written, are different questions. Each target is also run through its real server with the same corpus of ordinary and hostile requests: [Apache with ModSecurity](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_apache_blocking.py), [HAProxy](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_haproxy_blocking.py) and [Traefik](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_traefik_blocking.py), and nginx by [its own test](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_nginx_blocking.py). The [README](https://github.com/fabriziosalmi/patterns#does-it-load) says what they found. Until a target loads, the test records the known state and the issue that tracks it, and fails the day that changes.
+
 ## Regular expression dialects
 
 A pattern that does not compile on a target is a configuration that fails to load, so `patterns build` refuses to write anything if a backend would write an expression its target's engine rejects. The engines differ:

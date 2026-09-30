@@ -1,0 +1,5 @@
+# A configuration that is known to load, for checking the test itself: if this
+# does not pass, the harness is what is broken, not the generated output.
+acl block_scanner hdr_reg(user-agent) -i sqlmap
+acl block_xss query -m reg -i <script
+http-request deny if block_scanner or block_xss

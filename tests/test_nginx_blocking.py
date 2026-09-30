@@ -30,19 +30,21 @@ Usage:
 `directory` defaults to waf_patterns/nginx. Requires the `nginx` binary.
 """
 
-import http.client
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
-import urllib.parse
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from patterns.corpus import ATTACKS, BENIGN  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import conformance  # noqa: E402
+from conformance import in_clear  # noqa: E402
 
 PORT = 18998
 
@@ -53,20 +55,6 @@ PORT = 18998
 # a collapse, not to pin a number. See README, "What this catches".
 MINIMUM_CAUGHT_IN_CLEAR = 12
 MINIMUM_CAUGHT_ENCODED = 2
-
-
-def in_clear(entry):
-    """
-    The same attack with nothing hidden: what is sent when there is no reason
-    to encode. Control characters stay encoded because they cannot travel in a
-    request line, and `&` and `#` stay encoded because decoding them would
-    change the request rather than the payload.
-    """
-    decoded = urllib.parse.unquote(entry["args"])
-    decoded = decoded.replace(" ", "+").replace("&", "%26").replace("#", "%23")
-    decoded = "".join(c if c.isprintable() else "%%%02X" % ord(c) for c in decoded)
-    return dict(entry, args=decoded,
-                request_uri=f"{entry['path']}?{decoded}" if decoded else entry["path"])
 
 
 def wrap(maps_file: Path, rules_file: Path, workdir: Path) -> str:
@@ -99,19 +87,7 @@ http {{
 
 def send(entry) -> int:
     """Sends one corpus entry and returns the status code."""
-    connection = http.client.HTTPConnection("127.0.0.1", PORT, timeout=10)
-    headers = {"Host": entry["host"]}
-    if entry["user_agent"]:
-        headers["User-Agent"] = entry["user_agent"]
-    if entry["referer"]:
-        headers["Referer"] = entry["referer"]
-    if entry["content_type"]:
-        headers["Content-Type"] = entry["content_type"]
-    try:
-        connection.request("GET", entry["request_uri"], headers=headers)
-        return connection.getresponse().status
-    finally:
-        connection.close()
+    return conformance.send(PORT, entry)
 
 
 def main() -> int:

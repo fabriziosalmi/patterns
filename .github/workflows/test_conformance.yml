@@ -1,0 +1,55 @@
+name: Conformance
+
+permissions:
+  contents: read  # Needed to read the generated rules
+
+# Every generated configuration is loaded by the real server and sent the corpus
+# (patterns/corpus.py), as tests/test_nginx_blocking.py does for nginx. What each
+# target does today is written next to its test as EXPECTED, with the issue that
+# tracks it: a known defect does not turn this red, and fixing one turns it red
+# until EXPECTED says so.
+#
+# This replaces the job that ran `httpd -t` in a loop that never used the file it
+# was looping over, in an image without ModSecurity, on files mounted where Apache
+# does not read them. It could not fail.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  apache:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: "3.11"
+    # Apache 2.4 with ModSecurity 2, loading the files through the include
+    # docs/apache.md recommends.
+    - name: Load the Apache rules in Apache with ModSecurity
+      run: python3 tests/test_apache_blocking.py
+
+  haproxy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: "3.11"
+    # `haproxy -c`, then a running instance, in the two ways the file can be used.
+    - name: Load the HAProxy ACLs in HAProxy
+      run: python3 tests/test_haproxy_blocking.py
+
+  traefik:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: "3.11"
+    # A real Traefik, with a stand-in for the plugin the output is written for.
+    - name: Load the Traefik middleware in Traefik
+      run: python3 tests/test_traefik_blocking.py

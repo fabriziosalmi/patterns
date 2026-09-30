@@ -67,6 +67,15 @@ We welcome pull requests! Here's how to submit one:
    ```
    
    For web server specific testing, check the respective workflow files in `.github/workflows/`.
+   The conformance tests load the generated configuration in the real server and send it the
+   corpus; they need `docker` (nginx needs the `nginx` binary):
+   ```bash
+   python3 tests/test_nginx_blocking.py
+   python3 tests/test_apache_blocking.py
+   python3 tests/test_haproxy_blocking.py
+   python3 tests/test_traefik_blocking.py
+   ```
+   What each target does today is `EXPECTED` at the top of its test, with the issue that tracks it.
 
    If you change the format of `owasp_rules.json`, change `schema/ir.schema.json` and raise its `schema_version`: [Intermediate representation](docs/ir.md) says how.
 

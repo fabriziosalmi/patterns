@@ -1,0 +1,7 @@
+displayName: badbot (stand-in)
+type: middleware
+import: github.com/fabriziosalmi/badbot
+summary: Refuses a request whose User-Agent matches one of the configured expressions.
+testData:
+  userAgent:
+    - "sqlmap"

@@ -128,9 +128,26 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 The nginx figures above count the same rules as its row here: 174 written, 7 of
 the dropped ones because they refuse ordinary traffic.
 
-The other three backends have not been run against traffic yet (#59). What the
-table says about them comes from comparing what they write with what each target
-can express, not from sending requests.
+### Does it load?
+
+nginx is the only target whose output loads. The other three have been run through
+their real servers (Apache with ModSecurity, HAProxy, Traefik) with the same
+corpus, by [`tests/test_apache_blocking.py`](tests/test_apache_blocking.py),
+[`tests/test_haproxy_blocking.py`](tests/test_haproxy_blocking.py) and
+[`tests/test_traefik_blocking.py`](tests/test_traefik_blocking.py), and **none of
+them loads the generated configuration today**:
+
+| Target | What the server says | |
+|---|---|---|
+| Apache | `Failed to resolve operator: lt\`: operators written as if they were patterns | [#55](https://github.com/fabriziosalmi/patterns/issues/55) |
+| HAProxy | `unmatched quote`, and fetches that do not exist, however the file is loaded | [#67](https://github.com/fabriziosalmi/patterns/issues/67), [#68](https://github.com/fabriziosalmi/patterns/issues/68) |
+| Traefik | `toml: ...`: a backslash in a TOML basic string is not an escape | [#69](https://github.com/fabriziosalmi/patterns/issues/69) |
+
+Each test records that as the known state and fails the day it changes, so this
+table and the tests are kept together. Each also runs first against a small
+configuration that is known to load, so that the traffic phase is tested before it
+has anything real to measure. The Traefik test runs a stand-in for the `badbot`
+plugin the output is written for, which I could not identify (see #69).
 
 ## Highlights
 
