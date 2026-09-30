@@ -16,8 +16,9 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # 3.9 is the oldest the README promises; 3.12 is what the pipeline runs on.
-        python-version: ["3.9", "3.12"]
+        # 3.11 is the floor the docs state and what the other workflows run on.
+        # 3.9 cannot install requirements.txt: requests>=2.34.2 needs 3.10.
+        python-version: ["3.11", "3.13"]
 
     steps:
     - name: Checkout repository
