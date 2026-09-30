@@ -1,0 +1,242 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Patterns intermediate representation",
+  "description": "owasp_rules.json: the OWASP Core Rule Set as owasp2json.py reads it, and what every converter builds on. Documented in docs/ir.md. Any change to this file bumps schema_version, and tests/test_ir_schema.py fails if it does not.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "_provenance", "score_defaults", "rules"],
+  "properties": {
+    "schema_version": {
+      "description": "The version of this schema the document was written for.",
+      "const": 1
+    },
+    "_provenance": {
+      "description": "Where the rules come from. The document is a derived work of the CRS (Apache-2.0); see THIRD_PARTY_NOTICES.md.",
+      "type": "object",
+      "required": ["source", "source_repo", "source_ref", "license"],
+      "properties": {
+        "source": { "type": "string" },
+        "source_repo": { "type": "string" },
+        "source_ref": {
+          "description": "The one upstream tag the rules were read from.",
+          "type": "string",
+          "minLength": 1
+        },
+        "license": { "type": "string" },
+        "note": { "type": "string" },
+        "generated_by": { "type": "string" }
+      }
+    },
+    "score_defaults": {
+      "description": "What each anomaly level is worth, as REQUEST-901-INITIALIZATION.conf sets it. Defaults: a deployment can override them in crs-setup.conf.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "critical": { "type": "integer", "minimum": 0 },
+        "error": { "type": "integer", "minimum": 0 },
+        "warning": { "type": "integer", "minimum": 0 },
+        "notice": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/rule" }
+    }
+  },
+  "$defs": {
+    "rule": {
+      "description": "One directive of the CRS, in file order. A chain is several of these: see chain.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "pattern", "location", "severity", "transformations", "action",
+        "directive", "phase", "variables", "operator", "crs_severity", "score",
+        "chain", "target_rule_id", "category"
+      ],
+      "properties": {
+        "id": {
+          "description": "The CRS rule id, or \"no_id\" for a record that has none: a link of a chain, or a SecRuleUpdateTargetById.",
+          "type": "string",
+          "pattern": "^(\\d+|no_id)$"
+        },
+        "pattern": {
+          "description": "Deprecated. The operator string as the converters read it, operator included (\"@lt 1\"), with doubled backslashes folded. Replaced by operator, removed when the converters move to it.",
+          "type": "string",
+          "minLength": 1
+        },
+        "location": {
+          "description": "Deprecated. The variable list folded into one request component, \"UNKNOWN\" when none of them is mapped. Replaced by variables.",
+          "type": "string"
+        },
+        "severity": {
+          "description": "crs_severity folded into high, medium or low; medium when the rule declares none. A choice of this project, not of CRS.",
+          "enum": ["high", "medium", "low"]
+        },
+        "transformations": {
+          "description": "The t: chain the operator argument is written to run after, in order, without t:none.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "action": {
+          "description": "The disruptive action the rule declares. null means it inherits SecDefaultAction's, which is the case for every link of a chain.",
+          "enum": ["allow", "block", "deny", "drop", "pass", "proxy", "redirect", null]
+        },
+        "directive": {
+          "description": "SecRule is a rule. SecRuleUpdateTargetById adds a target to an existing rule (target_rule_id) and is not one itself.",
+          "enum": ["SecRule", "SecRuleUpdateTargetById"]
+        },
+        "phase": {
+          "description": "The phase the rule runs in, 1 to 5. A link of a chain has its head's. null only for a directive that is not a rule.",
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 5
+        },
+        "variables": {
+          "description": "What the operator is matched against, in the order written. For SecRuleUpdateTargetById, the targets it adds or excludes.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/variable" }
+        },
+        "operator": {
+          "description": "null for a directive that is not a rule.",
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/operator" }]
+        },
+        "crs_severity": {
+          "description": "The severity as the rule writes it, such as CRITICAL. null when it declares none.",
+          "type": ["string", "null"]
+        },
+        "score": {
+          "description": "The anomaly score the rule adds when it matches. For a chain, on its head, and added only when every link matches. null when the rule adds none.",
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/score" }]
+        },
+        "chain": {
+          "description": "null for a rule that is not part of a chain.",
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/chain" }]
+        },
+        "target_rule_id": {
+          "description": "The rule a SecRuleUpdateTargetById changes. null for a SecRule.",
+          "type": ["string", "null"]
+        },
+        "category": {
+          "description": "The part of the CRS the rule comes from: the name of its file without the number and the extension (SQLI, XSS, RCE, ...).",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "directive": { "const": "SecRule" } } },
+          "then": {
+            "properties": {
+              "operator": { "type": "object" },
+              "target_rule_id": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "directive": { "const": "SecRuleUpdateTargetById" } } },
+          "then": {
+            "properties": {
+              "operator": { "type": "null" },
+              "target_rule_id": { "type": "string", "minLength": 1 },
+              "phase": { "type": "null" },
+              "score": { "type": "null" },
+              "chain": { "type": "null" },
+              "action": { "type": "null" },
+              "transformations": { "maxItems": 0 }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "chain": { "type": "object", "properties": { "role": { "const": "link" } } } },
+            "required": ["chain"]
+          },
+          "then": {
+            "properties": {
+              "id": { "const": "no_id" },
+              "score": { "type": "null" },
+              "action": { "type": "null" }
+            }
+          }
+        }
+      ]
+    },
+    "variable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "selector", "count", "excluded"],
+      "properties": {
+        "name": {
+          "description": "The variable or collection, as written (ARGS, REQUEST_HEADERS, TX, ...).",
+          "type": "string",
+          "minLength": 1
+        },
+        "selector": {
+          "description": "What follows the first colon, as written. Wrapped in slashes it is a regular expression, except for XML, where it is XPath. null when the whole collection is meant.",
+          "type": ["string", "null"]
+        },
+        "count": {
+          "description": "True for &VAR: the number of matching variables, not their values.",
+          "type": "boolean"
+        },
+        "excluded": {
+          "description": "True for !VAR: taken out of the list, not added to it.",
+          "type": "boolean"
+        }
+      }
+    },
+    "operator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "negated", "argument"],
+      "properties": {
+        "name": {
+          "description": "The operator without the @, as written (rx, pm, pmFromFile, detectSQLi, lt, ...). rx when the rule names none.",
+          "type": "string",
+          "minLength": 1
+        },
+        "negated": {
+          "description": "True for !@op: the rule matches when the operator does not.",
+          "type": "boolean"
+        },
+        "argument": {
+          "description": "What follows the operator name, exactly as written: nothing is unescaped, and macros such as %{tx.x} are not expanded. Empty for an operator that takes none.",
+          "type": "string"
+        }
+      }
+    },
+    "score": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["direction", "level", "paranoia_level"],
+      "properties": {
+        "direction": { "enum": ["inbound", "outbound"] },
+        "level": {
+          "description": "What the rule adds is this level's points in score_defaults.",
+          "enum": ["critical", "error", "warning", "notice"]
+        },
+        "paranoia_level": { "type": "integer", "minimum": 1, "maximum": 4 }
+      }
+    },
+    "chain": {
+      "description": "A chain is a head and the links after it, in file order, and matches when every one of them does. Only the head carries an id, a phase, an action, a severity and a score.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "head", "position"],
+      "properties": {
+        "role": { "enum": ["head", "link"] },
+        "head": {
+          "description": "The id of the head of the chain this record is part of.",
+          "type": "string",
+          "pattern": "^\\d+$"
+        },
+        "position": {
+          "description": "0 for the head, then 1, 2, ... for each link.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

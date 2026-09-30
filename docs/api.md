@@ -183,27 +183,35 @@ The defaults point at system directories (`/etc/...`). Run the import scripts as
 
 ### `owasp_rules.json`
 
-A flat JSON array. Each item is a single rule with two required fields:
+A JSON document with a `schema_version`, the provenance of the rules, the anomaly score defaults and a `rules` list. Each record says which variables it is matched against, which operator it applies, in which phase, whether it is part of a chain and what score it adds.
 
 ```json
-[
-  {
-    "category": "SQLI",
-    "pattern": "(?i:union[\\s\\S]+select)"
-  },
-  {
-    "category": "XSS",
-    "pattern": "(?i:<script[^>]*>)"
-  }
-]
+{
+  "schema_version": 1,
+  "_provenance": { "source_ref": "v4.29.0", "license": "Apache-2.0" },
+  "score_defaults": { "critical": 5, "error": 4, "warning": 3, "notice": 2 },
+  "rules": [
+    {
+      "id": "941110",
+      "directive": "SecRule",
+      "category": "XSS",
+      "phase": 2,
+      "variables": [{ "name": "ARGS", "selector": null, "count": false, "excluded": false }],
+      "operator": { "name": "rx", "negated": false, "argument": "(?i)<script[^>]*>[\\s\\S]*?" },
+      "transformations": ["utf8toUnicode", "urlDecodeUni", "htmlEntityDecode"],
+      "action": "block",
+      "crs_severity": "CRITICAL",
+      "severity": "high",
+      "score": { "direction": "inbound", "level": "critical", "paranoia_level": 1 },
+      "chain": null
+    }
+  ]
+}
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `category` | string | OWASP CRS category derived from the source filename (e.g. `SQLI`, `XSS`, `RCE`, `LFI`, `RFI`, `BOTS`) |
-| `pattern` | string | Regex extracted from the matching `SecRule` directive |
+The record above is abridged. Every field, its type and its meaning are in [Intermediate representation](/ir), and the format is specified by [`schema/ir.schema.json`](https://github.com/fabriziosalmi/patterns/blob/main/schema/ir.schema.json).
 
-The converters validate each pattern with Python's `re.compile` before emitting platform-specific output, so malformed regexes are dropped rather than propagated.
+The converters currently read two older fields, `pattern` and `location`, and validate each pattern with Python's `re.compile` before emitting platform-specific output, so malformed regexes are dropped rather than propagated.
 
 ## Extending the toolchain
 

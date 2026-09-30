@@ -1,0 +1,43 @@
+name: IR validation
+
+permissions:
+  contents: read  # Needed to read the schema and the committed rules
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate-ir:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # 3.9 is the oldest the README promises; 3.12 is what the pipeline runs on.
+        python-version: ["3.9", "3.12"]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v7
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v7
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: pip install -r requirements.txt
+
+    # What the extractor reads out of a rule: variables, operator, phase, chain,
+    # score. Fixtures are CRS directives copied verbatim.
+    - name: Extract what a rule declares
+      run: python3 tests/test_ir_extraction.py
+
+    # The committed owasp_rules.json against schema/ir.schema.json, the schema's
+    # own refusals, and the version pin. Editing the schema without raising
+    # schema_version fails here.
+    - name: Validate owasp_rules.json against the schema
+      run: python3 tests/test_ir_schema.py

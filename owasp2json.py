@@ -27,6 +27,11 @@ BACKOFF_MULTIPLIER = 2
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")  # GitHub token for authentication
 CONNECTION_POOL_SIZE = 30   # More connections for faster parallel downloads
 
+# The version of the format owasp_rules.json is written in: schema/ir.schema.json.
+# It changes whenever that file does, and tests/test_ir_schema.py fails if the
+# schema moves without it.
+SCHEMA_VERSION = 1
+
 
 # --- Custom Exceptions ---
 class GitHubRequestError(Exception):
@@ -497,9 +502,291 @@ def _quoted_strings(text: str) -> List[str]:
     return out
 
 
-def extract_sec_rules(raw_text: str) -> List[Dict[str, str]]:
+# `phase:request` and `phase:response` are SecLang's names for phases 2 and 4.
+_PHASE_NAMES = {"request": 2, "response": 4, "logging": 5}
+_PHASE_RE = re.compile(r"^phase:'?(\w+)'?$")
+
+
+def _extract_phase(actions: str) -> Optional[int]:
     """
-    Extracts SecRule patterns and their metadata.
+    Returns the processing phase a rule declares, as a number from 1 to 5.
+
+    Args:
+        actions: The action list of a SecRule.
+
+    Returns:
+        The phase, or None when the rule declares none. That is the case for
+        every link of a chain after the first: a chain runs in its head's phase.
+    """
+    for action in _split_actions(actions):
+        match = _PHASE_RE.match(action)
+        if match:
+            value = match.group(1)
+            return int(value) if value.isdigit() else _PHASE_NAMES.get(value.lower())
+    return None
+
+
+def _extract_crs_severity(actions: str) -> Optional[str]:
+    """
+    Returns the severity exactly as the rule writes it, such as `CRITICAL`.
+
+    `severity` in the output is that value folded into high, medium or low,
+    which is a policy choice of the converters (#45). This one is what CRS said.
+
+    Args:
+        actions: The action list of a SecRule.
+
+    Returns:
+        The severity as written, or None when the rule declares none.
+    """
+    match = _SEVERITY_RE.search(actions)
+    return match.group(1) if match else None
+
+
+# A detection rule adds to the score of the transaction through
+# `setvar:'tx.inbound_anomaly_score_pl1=+%{tx.critical_anomaly_score}'`. The
+# direction and the paranoia level are in the name of the variable, the weight
+# in the name of the one it adds.
+_SCORE_RE = re.compile(
+    r"^setvar:'?tx\.(inbound|outbound)_anomaly_score_pl(\d)"
+    r"=\+%\{tx\.(critical|error|warning|notice)_anomaly_score\}'?$",
+    re.IGNORECASE,
+)
+
+
+def _extract_score(actions: str) -> Optional[Dict[str, object]]:
+    """
+    Returns the anomaly score a rule adds to a transaction when it matches.
+
+    A CRS signature does not refuse a request by itself. It adds points, and a
+    later rule refuses once the total passes a threshold. That is what a pattern
+    converted on its own loses, so the IR records it.
+
+    Args:
+        actions: The action list of a SecRule.
+
+    Returns:
+        `direction` (inbound or outbound), `level` (critical, error, warning
+        or notice) and `paranoia_level`; None when the rule adds no score.
+        What a level is worth is in the document's `score_defaults`.
+    """
+    for action in _split_actions(actions):
+        match = _SCORE_RE.match(action)
+        if match:
+            return {
+                "direction": match.group(1).lower(),
+                "level": match.group(3).lower(),
+                "paranoia_level": int(match.group(2)),
+            }
+    return None
+
+
+_SCORE_DEFAULT_RE = re.compile(
+    r"setvar:'?tx\.(critical|error|warning|notice)_anomaly_score=(\d+)'?",
+    re.IGNORECASE,
+)
+
+
+def extract_score_defaults(raw_text: str) -> Dict[str, int]:
+    """
+    Reads what CRS says each anomaly level is worth.
+
+    REQUEST-901-INITIALIZATION.conf sets them with a rule per level that fires
+    when the level is not set yet (`tx.critical_anomaly_score=5` and so on). A
+    deployment can override them in crs-setup.conf, so these are defaults and
+    not a fact about any server.
+
+    Args:
+        raw_text: The contents of a .conf file.
+
+    Returns:
+        Points by level; empty for a file that sets none.
+    """
+    defaults: Dict[str, int] = {}
+    for directive in _iter_directives(raw_text):
+        for level, points in _SCORE_DEFAULT_RE.findall(directive):
+            defaults[level.lower()] = int(points)
+    return defaults
+
+
+def _split_variables(spec: str) -> List[str]:
+    """
+    Splits a variable list on the `|` that separate variables.
+
+    A `|` inside a regular-expression selector does not separate: in
+    `ARGS:/^(a|b)$/|ARGS_NAMES` the list has two variables. XML selectors are
+    XPath, which also starts with a slash and is not a regular expression, so
+    `XML:/*|ARGS` is cut at its `|`.
+
+    Args:
+        spec: The variable list of a SecRule, as written.
+
+    Returns:
+        One string per variable.
+    """
+    parts: List[str] = []
+    buf: List[str] = []
+    i = 0
+    while i < len(spec):
+        ch = spec[i]
+        if ch == "|":
+            parts.append("".join(buf))
+            buf = []
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+        name = "".join(buf[:-1]).lstrip("!&").upper()
+        if ch == ":" and spec[i:i + 1] == "/" and name != "XML":
+            j = i + 1
+            while j < len(spec) and spec[j] != "/":
+                j += 2 if spec[j] == "\\" else 1
+            if j < len(spec):
+                buf.append(spec[i:j + 1])
+                i = j + 1
+    parts.append("".join(buf))
+    return parts
+
+
+def _parse_variables(spec: str) -> List[Dict[str, object]]:
+    """
+    Parses a variable list into one record per variable.
+
+    `!ARGS:foo` is `excluded`, `&ARGS:foo` is `count` (the number of matching
+    variables, not their values), and what follows the first `:` is the
+    `selector`, kept as written. A selector wrapped in slashes is a regular
+    expression.
+
+    Args:
+        spec: The variable list of a SecRule, as written.
+
+    Returns:
+        name, selector, count and excluded for each variable, in order.
+    """
+    variables: List[Dict[str, object]] = []
+    for token in _split_variables(spec):
+        token = token.strip()
+        excluded = count = False
+        while token[:1] in ("!", "&"):
+            excluded = excluded or token[0] == "!"
+            count = count or token[0] == "&"
+            token = token[1:]
+        if not token:
+            continue
+        name, separator, selector = token.partition(":")
+        variables.append({
+            "name": name,
+            "selector": selector if separator else None,
+            "count": count,
+            "excluded": excluded,
+        })
+    return variables
+
+
+_OPERATOR_RE = re.compile(r"^@(\w+)(?:\s+(.*))?$", re.DOTALL)
+
+
+def _parse_operator(text: str) -> Dict[str, object]:
+    """
+    Splits the operator string of a SecRule into its name and its argument.
+
+    `!@rx foo` is the operator `rx`, negated, with the argument `foo`. A string
+    with no `@operator` is a regular expression, because SecLang defaults to
+    `@rx`. The argument is kept as written: nothing is unescaped.
+
+    Args:
+        text: The first quoted string of a SecRule.
+
+    Returns:
+        name, negated and argument. The argument is empty for an operator that
+        takes none, such as `@unconditionalMatch`.
+    """
+    text = text.strip()
+    negated = text.startswith("!")
+    body = text[1:] if negated else text
+    match = _OPERATOR_RE.match(body)
+    if match:
+        return {"name": match.group(1), "negated": negated, "argument": match.group(2) or ""}
+    return {"name": "rx", "negated": negated, "argument": body}
+
+
+def _read_sec_rule(directive: str) -> Optional[Tuple[Dict[str, object], str]]:
+    """
+    Reads one `SecRule`.
+
+    Returns:
+        The rule and its action list, or None for a directive with no operator.
+    """
+    quoted = _quoted_strings(directive)
+    if not quoted:
+        return None
+
+    pattern = quoted[0].strip().replace("\\\\", "\\")
+    if not pattern:
+        return None
+
+    actions = quoted[1] if len(quoted) > 1 else ""
+    return {
+        "id": _extract_rule_id(actions),
+        "pattern": pattern,
+        "location": _extract_rule_location(directive),
+        "severity": _extract_rule_severity(actions),
+        "transformations": _extract_transformations(actions),
+        "action": _extract_disruptive_action(actions),
+        "directive": "SecRule",
+        "phase": _extract_phase(actions),
+        "variables": _parse_variables(directive[len("SecRule"):directive.index('"')]),
+        "operator": _parse_operator(quoted[0]),
+        "crs_severity": _extract_crs_severity(actions),
+        "score": _extract_score(actions),
+        "chain": None,
+        "target_rule_id": None,
+    }, actions
+
+
+def _read_target_update(directive: str) -> Optional[Dict[str, object]]:
+    """
+    Reads one `SecRuleUpdateTargetById`, which adds a target to an existing rule.
+
+    CRS uses it to exclude cookies such as `_ga` from a rule, in
+    `!REQUEST_COOKIES:/^_ga/` form. It is not a rule: it has no operator, and
+    what it names is a variable. The extractor used to read any directive that
+    starts with `SecRule` and record its quoted string as a pattern, which is
+    how 54 of them reached the output as regular expressions.
+
+    Returns:
+        The directive as a record with no operator, or None if it has no target.
+    """
+    quoted = _quoted_strings(directive)
+    tokens = directive.split()
+    if not quoted or len(tokens) < 3:
+        return None
+
+    pattern = quoted[0].strip().replace("\\\\", "\\")
+    if not pattern:
+        return None
+
+    return {
+        "id": _extract_rule_id(""),
+        "pattern": pattern,
+        "location": _extract_rule_location(directive),
+        "severity": _extract_rule_severity(""),
+        "transformations": [],
+        "action": None,
+        "directive": "SecRuleUpdateTargetById",
+        "phase": None,
+        "variables": _parse_variables(quoted[0]),
+        "operator": None,
+        "crs_severity": None,
+        "score": None,
+        "chain": None,
+        "target_rule_id": tokens[1],
+    }
+
+
+def extract_sec_rules(raw_text: str) -> List[Dict[str, object]]:
+    """
+    Extracts the rules of a CRS file and what each one declares.
 
     The previous version matched `SecRule\\s+.*?"(...)"`, which stops at the
     first quoted string: the operator. Everything after it was discarded,
@@ -508,43 +795,75 @@ def extract_sec_rules(raw_text: str) -> List[Dict[str, str]]:
     whole, continuations and all, and the actions are parsed from the second
     quoted string.
 
+    A chain is a rule followed by links that must all match, and only the first
+    carries an id, a phase, an action and a severity. Each link is still its own
+    record, as it always was, and says which rule it belongs to: `chain` is
+    `{"role": "head"}` on the first, `{"role": "link"}` on the rest. A link has
+    no id of its own, runs in its head's phase, and leaves the anomaly score to
+    the head, since CRS writes it on the last link and it is added only when the
+    whole chain matches.
+
     Args:
         raw_text: The contents of a .conf file.
 
     Returns:
-        One dict per rule, with id, pattern, location, severity,
-        transformations and disruptive action.
+        One dict per rule, in file order. The fields are documented in
+        docs/ir.md and specified in schema/ir.schema.json.
     """
-    rules = []
+    rules: List[Dict[str, object]] = []
+    # The head of the chain still open and the position its next link takes.
+    pending: Optional[Tuple[Dict[str, object], int]] = None
+
     for directive in _iter_directives(raw_text):
-        if not directive.startswith("SecRule"):
-            continue
-        quoted = _quoted_strings(directive)
-        if not quoted:
+        keyword = directive.split(None, 1)[0]
+
+        if keyword == "SecRuleUpdateTargetById":
+            pending = None
+            update = _read_target_update(directive)
+            if update:
+                rules.append(update)
             continue
 
-        pattern = quoted[0].strip().replace("\\\\", "\\")
-        if not pattern:
+        if keyword != "SecRule":
+            pending = None
             continue
 
-        actions = quoted[1] if len(quoted) > 1 else ""
-        rules.append({
-            "id": _extract_rule_id(actions),
-            "pattern": pattern,
-            "location": _extract_rule_location(directive),
-            "severity": _extract_rule_severity(actions),
-            "transformations": _extract_transformations(actions),
-            "action": _extract_disruptive_action(actions),
-        })
+        read = _read_sec_rule(directive)
+        if not read:
+            continue
+        rule, actions = read
+        chains_on = "chain" in _split_actions(actions)
+
+        if pending is not None:
+            head, position = pending
+            rule["chain"] = {"role": "link", "head": head["id"], "position": position}
+            rule["phase"] = head["phase"]
+            if rule["score"] is not None and head["score"] is None:
+                head["score"], rule["score"] = rule["score"], None
+        else:
+            head, position = rule, 0
+            if chains_on:
+                rule["chain"] = {"role": "head", "head": rule["id"], "position": 0}
+
+        pending = (head, position + 1) if chains_on else None
+        rules.append(rule)
     return rules
 
 
-def process_rule_file(file: Dict[str, str], session: requests.Session) -> List[Dict[str, str]]:
-    """Processes a single rule file, extracting rules and metadata."""
+def process_rule_file(
+    file: Dict[str, str], session: requests.Session
+) -> Tuple[List[Dict[str, object]], Dict[str, int]]:
+    """
+    Processes a single rule file, extracting rules and metadata.
+
+    Returns:
+        The rules, and the anomaly score defaults the file sets (empty for
+        every file but REQUEST-901-INITIALIZATION.conf).
+    """
     blob_b64 = fetch_github_blob(session, file["sha"])
     if not blob_b64:
         logger.warning(f"Skipping {file['name']} (empty blob).")
-        return []
+        return [], {}
 
     if not verify_blob_sha(file["sha"], blob_b64):
         pass # We check before but continue, since data is present
@@ -553,7 +872,7 @@ def process_rule_file(file: Dict[str, str], session: requests.Session) -> List[D
         raw_text = base64.b64decode(blob_b64).decode("utf-8")
     except Exception as e:
          logger.error(f"Failed to decode the file: {file['name']}. Reason: {e}")
-         return []
+         return [], {}
 
     category = file["name"].split("-")[-1].replace(".conf", "")
     extracted_rules = extract_sec_rules(raw_text)  # Get list of dicts
@@ -562,12 +881,23 @@ def process_rule_file(file: Dict[str, str], session: requests.Session) -> List[D
     for rule in extracted_rules:
         rule["category"] = category
 
-    return extracted_rules
+    return extracted_rules, extract_score_defaults(raw_text)
 
 
-def fetch_owasp_rules(session: requests.Session, rule_files: List[Dict[str, str]]) -> List[Dict[str, str]]:
-    """Fetches and processes rule files in parallel, returning all extracted rules."""
-    all_rules = []
+def fetch_owasp_rules(
+    session: requests.Session, rule_files: List[Dict[str, str]]
+) -> Tuple[List[Dict[str, object]], Dict[str, int]]:
+    """
+    Fetches and processes rule files in parallel.
+
+    Returns:
+        Every extracted rule, and the anomaly score defaults CRS sets. The rules
+        are in file-name order and, within a file, in file order. They used to
+        come out in the order the downloads happened to finish, so two runs on
+        the same CRS tag produced the same rules in a different order.
+    """
+    by_file: Dict[str, List[Dict[str, object]]] = {}
+    score_defaults: Dict[str, int] = {}
     with ThreadPoolExecutor(max_workers=CONNECTION_POOL_SIZE) as executor:
         future_to_file = {
             executor.submit(process_rule_file, file, session): file
@@ -577,14 +907,16 @@ def fetch_owasp_rules(session: requests.Session, rule_files: List[Dict[str, str]
         for future in tqdm(as_completed(future_to_file), total=len(rule_files), desc="Processing rules"):
             file = future_to_file[future]
             try:
-                rules = future.result()  # Get result (or raise exception)
-                all_rules.extend(rules)
+                rules, defaults = future.result()  # Get result (or raise exception)
+                by_file[file["name"]] = rules
+                score_defaults.update(defaults)
             except Exception as e:
                 logger.error(f"Error processing {file['name']}: {e}")
                 # Consider continuing even on individual file errors
 
+    all_rules = [rule for name in sorted(by_file) for rule in by_file[name]]
     logger.info(f"Fetched a total of {len(all_rules)} rules.")
-    return all_rules
+    return all_rules, score_defaults
 
 
 def build_provenance(source_ref: str) -> Dict[str, str]:
@@ -611,22 +943,33 @@ def build_provenance(source_ref: str) -> Dict[str, str]:
 
 
 def save_as_json(
-    rules: List[Dict[str, str]],
+    rules: List[Dict[str, object]],
     output_file: str,
     provenance: Optional[Dict[str, str]] = None,
+    score_defaults: Optional[Dict[str, int]] = None,
 ) -> bool:
     """Saves the extracted rules to a JSON file (atomically).
 
-    When ``provenance`` is supplied the payload is wrapped as
-    ``{"_provenance": {...}, "rules": [...]}`` so the attribution travels with
-    the data. The converters accept both this object form and a bare list.
+    When ``provenance`` is supplied the payload is the document described by
+    schema/ir.schema.json: ``{"schema_version": ..., "_provenance": {...},
+    "score_defaults": {...}, "rules": [...]}``. The attribution and the version
+    travel with the data. The converters accept this object form and a bare
+    list.
     """
     try:
         output_dir = Path(output_file).parent
         if output_dir:
              output_dir.mkdir(parents=True, exist_ok=True)
         temp_file = f"{output_file}.tmp"  # Use a temporary file
-        payload = {"_provenance": provenance, "rules": rules} if provenance is not None else rules
+        if provenance is not None:
+            payload = {
+                "schema_version": SCHEMA_VERSION,
+                "_provenance": provenance,
+                "score_defaults": score_defaults or {},
+                "rules": rules,
+            }
+        else:
+            payload = rules
         with open(temp_file, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=4)
         os.replace(temp_file, output_file)  # Atomic rename
@@ -668,13 +1011,13 @@ def main():
         return 1
 
     # 3. Fetch and process the rules (in parallel).
-    rules = fetch_owasp_rules(session, rule_files)
+    rules, score_defaults = fetch_owasp_rules(session, rule_files)
 
     # 4. Save the rules to a JSON file (unless it's a dry run).
     ref_name = latest_ref.split("/")[-1] if latest_ref else args.ref
     if not args.dry_run:
         if rules:
-            if save_as_json(rules, args.output, build_provenance(ref_name)):
+            if save_as_json(rules, args.output, build_provenance(ref_name), score_defaults):
                 logger.info(f"Saved {len(rules)} rules from {ref_name} to {args.output}.")
             else:
                 logger.error("Failed to save rules to JSON.") # if the save fail

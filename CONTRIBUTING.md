@@ -53,6 +53,10 @@ We welcome pull requests! Here's how to submit one:
    
    # Test the OWASP scraper
    python owasp2json.py
+
+   # Check what the extractor reads from a rule, and the format of owasp_rules.json
+   python3 tests/test_ir_extraction.py
+   python3 tests/test_ir_schema.py
    
    # Test the converters
    python json2nginx.py
@@ -65,6 +69,8 @@ We welcome pull requests! Here's how to submit one:
    ```
    
    For web server specific testing, check the respective workflow files in `.github/workflows/`.
+
+   If you change the format of `owasp_rules.json`, change `schema/ir.schema.json` and raise its `schema_version`: [Intermediate representation](docs/ir.md) says how.
 
 5. **Commit and Push**
    ```bash
