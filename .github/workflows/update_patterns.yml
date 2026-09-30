@@ -42,17 +42,8 @@ jobs:
     - name: 🕷️ Run OWASP Scraper
       run: python owasp2json.py
 
-    - name: 🔄 Convert OWASP to Nginx WAF
-      run: python json2nginx.py
-
-    - name: 🔄 Convert OWASP to Apache WAF
-      run: python json2apache.py
-
-    - name: 🔄 Convert OWASP to Traefik WAF
-      run: python json2traefik.py
-
-    - name: 🔄 Convert OWASP to HAProxy WAF
-      run: python json2haproxy.py
+    - name: 🔄 Build the WAF rules for every target
+      run: python3 -m patterns build --all
 
     - name: 🔄 Generate Bad Bot Blockers
       run: python badbots.py

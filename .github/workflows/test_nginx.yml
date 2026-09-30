@@ -51,7 +51,7 @@ jobs:
       run: python3 tests/validate_nginx.py
 
     - name: Regenerate from the committed rule set
-      run: python3 json2nginx.py
+      run: python3 -m patterns build --target nginx
 
     - name: Validate the regenerated configuration
       run: python3 tests/validate_nginx.py

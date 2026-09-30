@@ -8,9 +8,9 @@ anything was refused. What survives is one regex matched against one raw request
 component. Whether that is safe to block on is a question about this project's
 output, not about CRS, so it is measured rather than assumed.
 
-`BENIGN` is traffic that must never be refused. json2nginx.py checks every
+`BENIGN` is traffic that must never be refused. The nginx backend checks every
 candidate rule against it and refuses to emit one that matches, which is why
-this module sits beside the converters rather than under tests/: the exclusion
+this module sits beside the backends rather than under tests/: the exclusion
 is part of generating, not part of checking afterwards.
 
 `ATTACKS` is traffic that should be refused, and it only reports: a rule is
@@ -37,7 +37,7 @@ _DEFAULTS = {
 }
 
 # The request component each rule location is matched against, by the nginx
-# variable json2nginx.py keys its map on.
+# variable the nginx backend keys its map on.
 VARIABLE_FIELDS = {
     "$request_uri": "request_uri",
     "$args": "args",

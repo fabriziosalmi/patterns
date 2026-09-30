@@ -30,6 +30,32 @@ The script verifies each blob's SHA against the GitHub-reported value before par
 
 ---
 
+### `python3 -m patterns`
+
+Compiles `owasp_rules.json` into the configuration of a web server. Every target is a backend registered in `patterns/backends/`.
+
+```bash
+python3 -m patterns list                          # the targets
+python3 -m patterns validate                      # owasp_rules.json against its schema
+python3 -m patterns build --all                   # every target into waf_patterns/<target>/
+python3 -m patterns build --target nginx          # one; repeat --target for several
+python3 -m patterns build --all --out /tmp/out    # somewhere else: /tmp/out/<target>/
+python3 -m patterns build --all --check           # write nothing; exit 1 if the files on disk are stale
+```
+
+| Option | Default | Purpose |
+|---|---|---|
+| `--target T` / `--all` | (one is required) | What to build. |
+| `--input FILE` | `owasp_rules.json` | The IR. |
+| `--out DIR` | `waf_patterns` | The directory each target's directory goes in. |
+| `--check` | off | Compare instead of write. This is how CI tells that the committed output is not what the IR produces. |
+
+The same IR gives the same files, byte for byte, whatever the hash seed or the machine, **on Python 3.11 or later**. The backends keep a pattern only if Python's `re` compiles it, and from 3.11 `re` rejects a global flag such as `(?i)` that is not at the start of the pattern, where 3.9 accepts it: four Apache rules are in one output and not in the other. `build` warns on an older Python, and the committed files are the 3.11 ones. Exit codes: 0 on success, 1 when a file cannot be read or `--check` finds a difference, 2 on a usage error.
+
+::: warning The `json2*.py` scripts are deprecated
+`json2nginx.py`, `json2apache.py`, `json2traefik.py` and `json2haproxy.py` remain for one release as thin wrappers: each runs one target, reads `INPUT_FILE` and `OUTPUT_DIR` as before, and says it is deprecated. Use `python3 -m patterns build --target <name>`.
+:::
+
 ### `json2nginx.py`
 
 Converts `owasp_rules.json` into Nginx `map`-based rules.
@@ -217,11 +243,12 @@ The converters currently read two older fields, `pattern` and `location`, and va
 
 ### Adding a new platform
 
-1. Copy one of the existing `json2<platform>.py` converters as a starting point.
-2. Implement `_sanitize_pattern()` for the target syntax (escape rules differ between Nginx, Apache, HAProxy, …).
-3. Emit your output under `waf_patterns/<platform>/`.
-4. Add a workflow step in `.github/workflows/update_patterns.yml` to package the result.
-5. Add a documentation page under `docs/`.
+1. Copy one of the modules in `patterns/backends/` as a starting point.
+2. In it, define a `Backend` subclass with a `name` (what `--target` takes), a `title` (how generated files name the target) and `render(ir)`, which returns `{relative path: content}` and writes nothing. Decorate it with `@register`. Implement `_sanitize_pattern()` for the target syntax: escape rules differ between Nginx, Apache, HAProxy, &hellip;
+3. Add the module to the import list at the bottom of `patterns/backends/__init__.py`. That is the whole registration.
+4. Run `python3 -m patterns build --target <name>` and commit the result under `waf_patterns/<name>/`. `build --all --check` in CI keeps it current.
+5. Add a zip step in `.github/workflows/update_patterns.yml` to package the result.
+6. Add a documentation page under `docs/`.
 
 ### Pinning a different OWASP CRS version
 

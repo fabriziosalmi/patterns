@@ -36,7 +36,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-import json2nginx  # noqa: E402
+from patterns.backends import nginx as nginx_backend  # noqa: E402
 
 failures = 0
 checks = 0
@@ -102,7 +102,7 @@ if shutil.which("nginx") is None:
     print("nginx is not on PATH: skipping the parameter limit check.")
     sys.exit(0)
 
-limit = json2nginx.NGINX_MAX_PARAMETER
+limit = nginx_backend.NGINX_MAX_PARAMETER
 
 # Discovered rather than asserted. Measured at 4095 bytes on nginx 1.31.5 and on
 # the nginx the Ubuntu runners install, which is NGX_CONF_BUFFER less the

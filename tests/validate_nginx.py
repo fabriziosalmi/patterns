@@ -24,7 +24,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-import json2nginx  # noqa: E402
+from patterns.backends import nginx as nginx_backend  # noqa: E402
 DEFAULT_DIR = REPO_ROOT / "waf_patterns" / "nginx"
 
 
@@ -78,7 +78,7 @@ def main() -> int:
     over_limit = [
         (n, len(line.encode("utf-8")))
         for n, line in enumerate(maps_file.read_text().splitlines(), 1)
-        if len(line.strip().encode("utf-8")) > json2nginx.NGINX_MAX_PARAMETER
+        if len(line.strip().encode("utf-8")) > nginx_backend.NGINX_MAX_PARAMETER
     ]
     for line_number, length in over_limit:
         print(f"      {maps_file.name}:{line_number} is {length} bytes")

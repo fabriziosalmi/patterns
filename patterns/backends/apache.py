@@ -1,16 +1,17 @@
-import json
-import os
-import re
 import logging
-from pathlib import Path
-from typing import List, Dict, Set, Tuple, Optional
-from functools import lru_cache
-from collections import defaultdict  # Import defaultdict
+import re
+from collections import defaultdict
+from typing import Dict, List
 
-# --- Configuration ---
-LOG_LEVEL = logging.INFO  # Adjust as needed (DEBUG, INFO, WARNING, ERROR)
-INPUT_FILE = Path(os.getenv("INPUT_FILE", "owasp_rules.json"))
-OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "waf_patterns/apache"))
+from patterns.backends import Backend, register
+from patterns.backends._common import (
+    UNSUPPORTED_FILE_OPERATORS,
+    provenance_header,
+    validate_regex,
+)
+from patterns.ir import IR
+
+logger = logging.getLogger(__name__)
 
 # ModSecurity Rule Templates (more flexible)
 MODSEC_RULE_TEMPLATE = (
@@ -20,11 +21,6 @@ MODSEC_RULE_TEMPLATE = (
 # Default Actions
 DEFAULT_ACTIONS = "deny,status:403,log"
 
-# Unsupported ModSecurity directives (expand as needed)
-UNSUPPORTED_PATTERNS = [
-    "@pmFromFile",  # File lookups not directly supported
-    # You might handle some of these with ctl:ruleRemoveTargetById later
-]
 # Supported ModSecurity operators and their rough translations (for logging/info)
 SUPPORTED_OPERATORS = {
     "@rx": "Regular Expression",
@@ -37,21 +33,8 @@ SUPPORTED_OPERATORS = {
     # ... add more as needed
 }
 
-# --- Logging Setup ---
-logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
 
 # --- Utility Functions ---
-@lru_cache(maxsize=None)
-def validate_regex(pattern: str) -> bool:
-    """Validates a regex pattern (basic check)."""
-    try:
-        re.compile(pattern)
-        return True
-    except re.error as e:
-        logger.warning(f"Invalid regex: {pattern} - {e}")
-        return False
-
 def _sanitize_pattern(pattern: str) -> str:
     """Internal helper to perform basic pattern sanitization."""
     # Remove @rx prefix, if present
@@ -82,13 +65,13 @@ def _determine_variables(location: str) -> str:
         return "REQUEST_URI"  # Default variable
 
 
-def generate_apache_waf(rules: List[Dict], crs_ref: str = "latest") -> None:
-    """Generates Apache ModSecurity configuration files."""
+def generate_apache_waf(rules: List[Dict], crs_ref: str = "latest") -> Dict[str, str]:
+    """Builds the Apache ModSecurity configuration files, one per category."""
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Use a dictionary to group rules by category.  Sets prevent duplicates.
-    categorized_rules: Dict[str, Set[str]] = defaultdict(set)
+    # Rules grouped by category. A dict keeps what was added in the order it was
+    # added and still drops duplicates. A set did the second and not the first,
+    # so the order of a file followed the hash seed of the run that wrote it.
+    categorized_rules: Dict[str, Dict[str, None]] = defaultdict(dict)
     rule_id_counter = 9000000  # Start with a high ID range (OWASP CRS convention)
 
 
@@ -120,7 +103,7 @@ def generate_apache_waf(rules: List[Dict], crs_ref: str = "latest") -> None:
                 break  # Stop after finding the *first* matching operator
 
         # Skip unsupported patterns.
-        if any(unsupported in pattern for unsupported in UNSUPPORTED_PATTERNS):
+        if any(unsupported in pattern for unsupported in UNSUPPORTED_FILE_OPERATORS):
             logger.info(f"[!] Skipping unsupported pattern: {pattern}")
             continue
 
@@ -142,81 +125,27 @@ def generate_apache_waf(rules: List[Dict], crs_ref: str = "latest") -> None:
             phase=2,  # Phase 2 (request body processing) is common, adjust if needed
             actions=DEFAULT_ACTIONS,
         )
-        categorized_rules[category].add(rule_str)  # added into a dict
+        categorized_rules[category][rule_str] = None
 
 
-    # --- File Output ---
-    # Write rules to per-category files.  This is good for organization.
+    # --- Files ---
+    # Rules go to per-category files.  This is good for organization.
+    files: Dict[str, str] = {}
     for category, rule_set in categorized_rules.items():
-        output_file = OUTPUT_DIR / f"{category}.conf"
-        try:
-            with open(output_file, "w") as f:
-                f.write(provenance_header(crs_ref))
-                f.write(f"# ModSecurity Rules for Category: {category.upper()}\n")
-                f.write("SecRuleEngine On\n\n")  # Enable the rule engine
-                for rule in rule_set:
-                    f.write(rule)
-            logger.info(f"Generated {output_file} ({len(rule_set)} rules)")
-        except IOError as e:
-            logger.error(f"Error writing to {output_file}: {e}")
-            #  Consider raising the exception here if you want the script to *stop*
-            #  on any file write error.
+        files[f"{category}.conf"] = "".join([
+            provenance_header(crs_ref, Apache.title),
+            f"# ModSecurity Rules for Category: {category.upper()}\n",
+            "SecRuleEngine On\n\n",  # Enable the rule engine
+            *rule_set,
+        ])
+        logger.info(f"Generated {category}.conf ({len(rule_set)} rules)")
+    return files
 
 
-def load_owasp_rules(file_path: Path) -> List[Dict]:
-    """Loads OWASP rules from the JSON file.
+@register
+class Apache(Backend):
+    name = "apache"
+    title = "Apache (ModSecurity)"
 
-    Accepts either a bare list of rule objects or the
-    ``{"_provenance": ..., "rules": [...]}`` object form emitted by owasp2json.py.
-    """
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError, Exception) as e:
-        logger.error(f"Error loading rules from {file_path}: {e}")
-        raise
-    if isinstance(data, dict):
-        return data.get("rules", [])
-    return data
-
-
-def load_provenance_ref(file_path: Path) -> str:
-    """Returns the CRS reference recorded in owasp_rules.json, or 'latest'."""
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            return data.get("_provenance", {}).get("source_ref", "latest")
-    except Exception:
-        pass
-    return "latest"
-
-
-def provenance_header(crs_ref: str) -> str:
-    """Attribution block prepended to every generated file.
-
-    Records that the output is a derived/converted work of the OWASP Core Rule
-    Set (Apache-2.0). See THIRD_PARTY_NOTICES.md.
-    """
-    return (
-        f"# Generated by fabriziosalmi/patterns from OWASP CoreRuleSet ({crs_ref}), "
-        "Apache-2.0; converted to Apache (ModSecurity).\n"
-        "# Source rules: https://github.com/coreruleset/coreruleset\n"
-        "# Derived/converted work redistributed under Apache-2.0. "
-        "See THIRD_PARTY_NOTICES.md.\n"
-        "#\n"
-    )
-
-def main():
-    """Main function."""
-    try:
-        rules = load_owasp_rules(INPUT_FILE)
-        crs_ref = load_provenance_ref(INPUT_FILE)
-        generate_apache_waf(rules, crs_ref)
-        logger.info("Apache ModSecurity configuration generated successfully.")
-    except Exception as e:
-        logger.critical(f"Script failed: {e}")
-        exit(1)
-
-if __name__ == "__main__":
-    main()
+    def render(self, ir: IR) -> Dict[str, str]:
+        return generate_apache_waf(ir.rules, ir.crs_ref)

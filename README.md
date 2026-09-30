@@ -47,7 +47,7 @@ matches one regex against one raw request component, and that is all it can do.
 So the converted rule set is measured against ordinary traffic and against
 attacks, with `nginx` itself, by [`tests/test_nginx_blocking.py`](tests/test_nginx_blocking.py).
 Against CRS v4.29.0, 174 emitted rules, 38 ordinary requests and 21 attacks
-([`corpus.py`](corpus.py)):
+([`patterns/corpus.py`](patterns/corpus.py)):
 
 | | |
 |---|---|
@@ -121,13 +121,13 @@ git clone https://github.com/fabriziosalmi/patterns.git
 cd patterns
 pip install -r requirements.txt
 
-python owasp2json.py            # 1. Fetch the latest OWASP CRS into owasp_rules.json
-python json2nginx.py            # 2. Convert into Nginx WAF config
-python json2apache.py           #    …or Apache (ModSecurity)
-python json2traefik.py          #    …or Traefik middleware
-python json2haproxy.py          #    …or HAProxy ACL files
-python badbots.py               # 3. Generate bad-bot blocklists
+python owasp2json.py                         # 1. Fetch the latest OWASP CRS into owasp_rules.json
+python3 -m patterns build --all              # 2. Compile it for every target…
+python3 -m patterns build --target nginx     #    …or for one: nginx, apache, traefik, haproxy
+python badbots.py                            # 3. Generate bad-bot blocklists
 ```
+
+`python3 -m patterns list` shows the targets, and `python3 -m patterns validate` checks `owasp_rules.json` against [its schema](https://fabriziosalmi.github.io/patterns/ir). The `json2*.py` scripts still work, and print that they are deprecated.
 
 Generated files land in `waf_patterns/<platform>/`.
 
@@ -141,24 +141,28 @@ Generated files land in `waf_patterns/<platform>/`.
                                                         │
             ┌─────────────────┬──────────────────┬──────┴──────────┐
             ▼                 ▼                  ▼                 ▼
-      json2nginx.py    json2apache.py    json2traefik.py    json2haproxy.py
+         nginx            apache           traefik           haproxy
+                  (patterns/backends/, run by `python3 -m patterns build`)
             │                 │                  │                 │
             ▼                 ▼                  ▼                 ▼
        nginx_waf.zip    apache_waf.zip    traefik_waf.zip    haproxy_waf.zip
                           (published as a GitHub Release)
 ```
 
-Each converter is independent, idempotent, and configured exclusively through environment variables (`INPUT_FILE`, `OUTPUT_DIR`). Full reference at [docs/api](https://fabriziosalmi.github.io/patterns/api).
+Each target is a backend registered in `patterns/backends/`, and building is deterministic: the same `owasp_rules.json` gives the same files, byte for byte, which CI checks with `python3 -m patterns build --all --check`. Full reference at [docs/api](https://fabriziosalmi.github.io/patterns/api).
 
 ## Repository layout
 
 ```text
 patterns/
 ├── owasp2json.py            # Pull and parse OWASP CRS into a JSON intermediate
-├── json2nginx.py            # JSON → Nginx (map + if directives)
-├── json2apache.py           # JSON → Apache (ModSecurity SecRule)
-├── json2traefik.py          # JSON → Traefik (middleware TOML)
-├── json2haproxy.py          # JSON → HAProxy (ACL files)
+├── patterns/                # The compiler: python3 -m patterns
+│   ├── ir.py                #   load and validate the intermediate representation
+│   ├── backends/            #   one module per target: nginx, apache, traefik, haproxy
+│   ├── cli.py               #   list, validate, build
+│   └── corpus.py            #   the traffic every backend is measured against
+├── schema/                  # The JSON Schema of owasp_rules.json
+├── json2*.py                # Deprecated entry points, one per target
 ├── badbots.py               # Public bot lists → per-platform blocklists
 ├── import_*_waf.py          # Optional installers for each platform
 ├── waf_patterns/            # Generated outputs

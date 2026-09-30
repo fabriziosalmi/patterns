@@ -59,10 +59,8 @@ We welcome pull requests! Here's how to submit one:
    python3 tests/test_ir_schema.py
    
    # Test the converters
-   python json2nginx.py
-   python json2apache.py
-   python json2traefik.py
-   python json2haproxy.py
+   python3 -m patterns build --all
+   python3 tests/test_cli.py
    
    # Test bad bot generation
    python badbots.py

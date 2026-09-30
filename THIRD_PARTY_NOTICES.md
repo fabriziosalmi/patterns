@@ -5,7 +5,7 @@ and converts** rule and blocklist data published by third-party projects into th
 native configuration syntax of Nginx, Apache, Traefik, and HAProxy.
 
 The original code of this project — the Python converters (`owasp2json.py`,
-`json2nginx.py`, `json2apache.py`, `json2traefik.py`, `json2haproxy.py`,
+the `patterns/` package and the `json2*.py` entry points,
 `badbots.py`, `import_*.py`), the documentation, and the tests — is licensed under
 the [MIT License](LICENSE) (Copyright (c) Fabrizio Salmi).
 

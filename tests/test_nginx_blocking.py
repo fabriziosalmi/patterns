@@ -15,8 +15,8 @@ So this starts nginx and sends traffic.
 
 Two things are asserted, and they are not the same kind of claim:
 
-  * No ordinary request may be refused. This is an invariant. json2nginx.py
-    excludes any rule matching corpus.BENIGN before emitting it, so a failure
+  * No ordinary request may be refused. This is an invariant. The nginx
+    backend excludes any rule matching corpus.BENIGN before emitting it, so a failure
     here means that exclusion stopped working.
 
   * Attacks are counted, against a floor rather than an exact figure. CRS
@@ -42,7 +42,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from corpus import ATTACKS, BENIGN  # noqa: E402
+from patterns.corpus import ATTACKS, BENIGN  # noqa: E402
 
 PORT = 18998
 
@@ -153,7 +153,7 @@ def main() -> int:
         print(f"  FAIL  {len(refused_benign)} ordinary requests were refused:")
         for name in refused_benign:
             print(f"        {name}")
-        print("        json2nginx.py is meant to exclude any rule matching "
+        print("        the nginx backend is meant to exclude any rule matching "
               "corpus.BENIGN before emitting it.")
     else:
         print(f"  ok    none refused")

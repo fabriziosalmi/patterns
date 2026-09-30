@@ -7,9 +7,8 @@ on:
   push:
     branches:
       - main
+  # Any base, not only main: a pull request stacked on another one is tested too.
   pull_request:
-    branches:
-      - main
 
 jobs:
   validate-ir:
@@ -42,3 +41,29 @@ jobs:
     # schema_version fails here.
     - name: Validate owasp_rules.json against the schema
       run: python3 tests/test_ir_schema.py
+
+  # Every target is built from the committed IR and has to be what is committed.
+  # The converters used to write a set, so two runs on the same input gave
+  # different files and there was nothing to compare with.
+  build-reproducible:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v7
+
+    - name: Set up Python
+      uses: actions/setup-python@v7
+      with:
+        python-version: "3.11"
+
+    - name: Install dependencies
+      run: pip install -r requirements.txt
+
+    # The command line, the registry, the same bytes across hash seeds, and the
+    # json2*.py entry points that came before it.
+    - name: Test the command line and the build
+      run: python3 tests/test_cli.py
+
+    - name: Fail if the committed output is stale
+      run: python3 -m patterns build --all --check

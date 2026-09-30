@@ -37,11 +37,9 @@ pip install -r requirements.txt
 # 1. Fetch the latest OWASP Core Rule Set into a JSON intermediate
 python owasp2json.py
 
-# 2. Convert the JSON into native rules for your platform
-python json2nginx.py
-python json2apache.py
-python json2traefik.py
-python json2haproxy.py
+# 2. Compile the JSON into native rules for your platform
+python3 -m patterns build --all              # every target…
+python3 -m patterns build --target nginx     # …or one: nginx, apache, traefik, haproxy
 
 # 3. Generate bad-bot blocklists alongside
 python badbots.py
@@ -84,7 +82,8 @@ For details on the bot blocklist itself, see [Bad Bot Detection](/badbots). For 
                                                         │
             ┌─────────────────┬──────────────────┬──────┴──────────┐
             ▼                 ▼                  ▼                 ▼
-      json2nginx.py    json2apache.py    json2traefik.py    json2haproxy.py
+         nginx            apache           traefik           haproxy
+                  (patterns/backends/, run by `python3 -m patterns build`)
             │                 │                  │                 │
             ▼                 ▼                  ▼                 ▼
        nginx_waf.zip    apache_waf.zip    traefik_waf.zip    haproxy_waf.zip
