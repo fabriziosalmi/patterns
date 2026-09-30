@@ -175,7 +175,7 @@ jobs:
           --existing-tags existing-tags.txt --previous-sums previous/SHA256SUMS | tee -a gate.log
 
     - name: 🔏 Install cosign
-      uses: sigstore/cosign-installer@v4
+      uses: sigstore/cosign-installer@v4.1.2
 
     # Keyless: the signature is made with the identity of this workflow run, which
     # Sigstore certifies for a few minutes and records in a public log. There is no
