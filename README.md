@@ -46,8 +46,8 @@ matches one regex against one raw request component, and that is all it can do.
 
 So the converted rule set is measured against ordinary traffic and against
 attacks, with `nginx` itself, by [`tests/test_nginx_blocking.py`](tests/test_nginx_blocking.py).
-Against CRS v4.29.0, 174 emitted rules, 38 ordinary requests and 21 attacks
-([`patterns/corpus.py`](patterns/corpus.py)):
+Against the rules in this repository (the nginx row of the table below), 38
+ordinary requests and 21 attacks ([`patterns/corpus.py`](patterns/corpus.py)):
 
 | | |
 |---|---|
@@ -125,8 +125,9 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 | case-insensitivity is not honoured |  |  | 3 |  |
 <!-- coverage:end -->
 
-The nginx figures above count the same rules as its row here: 174 written, 7 of
-the dropped ones because they refuse ordinary traffic.
+The nginx figures above are measured on the rules in its row here. The table is
+rebuilt with the rules every night; the figures in prose are not, and are kept
+honest by the floors in the tests rather than by being regenerated.
 
 ### Does it load?
 

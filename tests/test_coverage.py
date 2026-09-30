@@ -19,7 +19,8 @@ holds them to it:
   * the dialect check: `build` refuses to write a regular expression the
     target's engine does not compile;
   * the table in README.md and docs/coverage.md is what the data says, and the
-    README's own figure for nginx is one of them.
+    README states no count of rules that the table could disagree with (the
+    nightly build regenerates the table, and prose is not regenerated).
 
 The committed files are built with Python 3.11 or later, and the dialect check
 needs it: below that the checks that depend on it are skipped, and say so.
@@ -333,10 +334,8 @@ check("the table names every target",
 
 print("what the documents say")
 readme = (REPO_ROOT / "README.md").read_text()
-nginx_written = sum(v for k, v in report["backends"]["nginx"]["totals"].items() if k != "dropped")
-claimed = re.search(r"(\d+) emitted rules", readme)
-check("the README's own figure for nginx is the matrix's",
-      int(claimed.group(1)) if claimed else None, nginx_written)
+check("the README states no count of rules that the table could disagree with",
+      re.search(r"\d+ (?:emitted|written) rules", readme), None)
 if MODERN:
     result = subprocess.run([sys.executable, "-W", "ignore", "-m", "patterns", "coverage", "--check"],
                             cwd=REPO_ROOT, capture_output=True, text=True)

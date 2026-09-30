@@ -68,3 +68,5 @@ Thumbs.db
 
 # Workspace settings
 .claude/
+gate.log
+issue.md

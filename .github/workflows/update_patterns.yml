@@ -1,10 +1,24 @@
 name: Update Patterns
 
 permissions:
-  contents: write  # Commit changes, push updates
-  statuses: write  # Update commit statuses
+  contents: write  # Commit and push what was built, and publish the release
+  issues: write    # Open an issue when the build fails its checks
   actions: read    # Required for checking out the repository
-  packages: write  # For GitHub Packages (if used)
+
+# The order of this job is the point of it:
+#
+#   build   fetch the rules, compile them for every target, refresh the tables
+#   gate    run the tests on what was just built
+#   publish commit, push and release, only if every check above passed
+#
+# It used to build, then commit, then release, and never tested: the commit step
+# ran `git add .` and then `git diff --quiet`, which compares the working tree
+# with what was just added and so never sees a change. Nothing was committed
+# after 2025-02-28 while the release was built from the working tree every night.
+#
+# Publishing is for the default branch only. A run from any other branch (a
+# manual dispatch to try a change to this file, or a change to a generator) builds
+# and runs the gate and publishes nothing.
 
 on:
   schedule:
@@ -14,6 +28,10 @@ on:
 jobs:
   update-owasp-waf:
     runs-on: ubuntu-latest
+    # pipefail, so that a test piped to `tee gate.log` still fails the step.
+    defaults:
+      run:
+        shell: bash
 
     steps:
     - name: 🚚 Checkout Repository
@@ -41,28 +59,77 @@ jobs:
 
     - name: 🕷️ Run OWASP Scraper
       run: python owasp2json.py
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # the unauthenticated API limit is 60 an hour
 
+    # Refuses to write anything if a backend would write a regular expression its
+    # target's engine does not compile.
     - name: 🔄 Build the WAF rules for every target
       run: python3 -m patterns build --all
 
     - name: 🔄 Generate Bad Bot Blockers
       run: python badbots.py
 
-    - name: 🚀 Commit and Push Changes (if any)
+    # The tables in the README and docs/coverage.md follow the rules.
+    - name: 🔄 Refresh the coverage tables
+      run: python3 -m patterns coverage --write
+
+    # --- Gate ---------------------------------------------------------------
+    # Everything below runs on what was just built, and nothing is committed or
+    # released until all of it passes. Each step adds to gate.log, which an issue
+    # quotes when one fails.
+
+    - name: 🚦 Install what the tests need
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y nginx
+
+    - name: 🚦 The rules and what reads them
+      run: |
+        { python3 -m patterns validate \
+          && python3 tests/test_ir_extraction.py \
+          && python3 tests/test_ir_schema.py \
+          && python3 tests/test_extraction.py \
+          && python3 tests/test_resolve_ref.py; } 2>&1 | tee -a gate.log
+
+    - name: 🚦 nginx loads it and blocks attacks, and refuses nothing ordinary
+      run: |
+        { python3 tests/test_parameter_limit.py \
+          && python3 tests/validate_nginx.py \
+          && python3 tests/test_nginx_blocking.py; } 2>&1 | tee -a gate.log
+
+    - name: 🚦 What each target does with each rule
+      run: |
+        { python3 tests/test_coverage.py \
+          && python3 tests/test_cli.py; } 2>&1 | tee -a gate.log
+
+    # These three record what each target does today (a known defect, with its
+    # issue) and fail when that changes, for better or worse.
+    - name: 🚦 Apache, HAProxy and Traefik in their servers
+      run: |
+        { python3 tests/test_apache_blocking.py \
+          && python3 tests/test_haproxy_blocking.py \
+          && python3 tests/test_traefik_blocking.py; } 2>&1 | tee -a gate.log
+
+    # --- Publish ------------------------------------------------------------
+
+    - name: 🚀 Commit and push what changed
+      if: github.ref == 'refs/heads/main'
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git add .
-        # Check if there are any changes *before* committing.
-        if ! git diff --quiet --exit-code; then
+        git add owasp_rules.json waf_patterns README.md docs/coverage.md
+        # What was just added, not the working tree against it: `git diff --quiet`
+        # after `git add` is always quiet.
+        if git diff --cached --quiet; then
+          echo "No changes to commit."
+        else
           git commit -m "Update WAF rules [$(date +'%Y-%m-%d')]"
           git push
-        else
-          echo "No changes to commit."
         fi
-      continue-on-error: true  # Continue even if no changes
 
     - name: 📦 Create Zip Archives
+      if: github.ref == 'refs/heads/main'
       run: |
         mkdir -p dist
         (cd waf_patterns/nginx && zip -r ../../dist/nginx_waf.zip .)
@@ -71,6 +138,7 @@ jobs:
         (cd waf_patterns/haproxy && zip -r ../../dist/haproxy_waf.zip .)
 
     - name: 🗑️ Delete Existing 'latest' Tag and Release (if they exist)
+      if: github.ref == 'refs/heads/main'
       run: |
         # Delete local tag
         git tag -d latest || true
@@ -83,7 +151,7 @@ jobs:
 
 
     - name: 📝 Generate release notes
-      if: success()
+      if: success() && github.ref == 'refs/heads/main'
       run: |
         set -euo pipefail
 
@@ -179,7 +247,7 @@ jobs:
         echo "Generated release_notes.md ($(wc -l < release_notes.md) lines)"
 
     - name: 🚀 Publish release
-      if: success()
+      if: success() && github.ref == 'refs/heads/main'
       uses: softprops/action-gh-release@v3
       with:
         tag_name: latest
@@ -199,9 +267,36 @@ jobs:
       if: always()  # Run cleanup even on failure
       run: rm -rf ~/.cache/pip
 
-    - name: 🚨 Notify on Failure (Optional)
-      if: failure()
+    # A failure anywhere above, the gate included, means nothing was published
+    # and the previous release is still the latest. Say so where someone will see
+    # it: one open issue, updated while the build keeps failing.
+    - name: 🚨 Open or update an issue
+      if: failure() && github.ref == 'refs/heads/main'
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        echo "🚨 Workflow failed! Please investigate."
-        # Example: Send a Slack notification (requires a Slack webhook URL)
-        # curl -X POST -H 'Content-type: application/json' --data '{"text":"WAF update workflow failed!"}' ${{ secrets.SLACK_WEBHOOK }}
+        RUN="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        {
+          echo "The nightly build failed its checks, so nothing was committed or released and the previous release is still the latest."
+          echo
+          echo "Run: $RUN ($(date -u +'%Y-%m-%d %H:%M') UTC)"
+          echo
+          if [ -s gate.log ]; then
+            echo "The end of what the checks printed:"
+            echo
+            echo '```text'
+            tail -n 60 gate.log
+            echo '```'
+          else
+            echo "It failed before the checks ran; the log of the run says where."
+          fi
+        } > issue.md
+        gh label create nightly-failure --color d73a4a \
+          --description "The nightly build failed its checks" 2>/dev/null || true
+        NUMBER=$(gh issue list --label nightly-failure --state open --json number --jq '.[0].number // empty')
+        if [ -n "$NUMBER" ]; then
+          gh issue comment "$NUMBER" --body-file issue.md
+        else
+          gh issue create --label nightly-failure \
+            --title "The nightly build failed its checks" --body-file issue.md
+        fi
