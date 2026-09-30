@@ -9,6 +9,7 @@ The command line: `python3 -m patterns <command>`.
              [--write | --check]
     diff OLD NEW                 what changed between two versions of the rules
          [--json FILE] [--no-targets]
+    package --out DIR            the files of a release, and what to call it
 
 `build` writes each target under `--out` (default `waf_patterns`) in a directory
 named after it, and with `--all` the coverage matrix as `coverage.json` beside
@@ -19,6 +20,11 @@ files on disk are not what the IR produces, which is how CI tells a stale commit
 `diff` compares two IR files by rule and, unless `--no-targets`, says what the
 change does to each target. It prints the summary as Markdown and `--json` writes
 the whole of it. It reports and does not judge: it exits 0 whatever it finds.
+
+`package` writes what a release holds (one archive per target that is the same bytes
+for the same files, coverage.json, changes.json, SHA256SUMS and release.json) and
+chooses its tag. See patterns/release.py. With GITHUB_OUTPUT set it also writes
+`tag`, `publish` and `crs_ref` for the workflow.
 
 `coverage` prints the matrix as a table. `--write` puts that table in the files
 that show it (README.md and docs/coverage.md, between `coverage:start` and
@@ -33,7 +39,10 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from patterns import backends, coverage, diff, ir
+import datetime
+import json
+
+from patterns import backends, coverage, diff, ir, release
 from patterns.backends import Compiled
 
 logger = logging.getLogger("patterns")
@@ -232,6 +241,39 @@ def _diff(args: argparse.Namespace) -> int:
     return 0
 
 
+def _package(args: argparse.Namespace) -> int:
+    logging.getLogger().setLevel(logging.ERROR)
+    try:
+        rules = ir.load(args.rules)
+    except (OSError, ValueError) as e:
+        print(f"cannot read {args.rules}: {e}", file=sys.stderr)
+        return 1
+    if rules.crs_ref in ("", "latest"):
+        # `latest` is what the extractor writes when it could not resolve a tag. A
+        # release named for it would say nothing about what it is.
+        print(f"{args.rules} does not say which CRS tag it was read from", file=sys.stderr)
+        return 1
+    existing = args.existing_tags.read_text().split() if args.existing_tags else []
+    previous = (args.previous_sums.read_text() if args.previous_sums and args.previous_sums.is_file()
+                else None)
+    date = args.date or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+    try:
+        made = release.package(
+            args.out, args.source, args.rules, date, rules.crs_ref, args.commit, args.run_url,
+            existing, previous,
+            extra={"coverage.json": args.coverage, "changes.json": args.changes})
+    except ValueError as e:
+        print(f"cannot name the release: {e}", file=sys.stderr)
+        return 1
+    print(json.dumps({"tag": made["tag"], "publish": made["publish"]}))
+    target = os.getenv("GITHUB_OUTPUT")
+    if target:
+        with open(target, "a", encoding="utf-8") as f:
+            f.write(f"tag={made['tag']}\npublish={str(made['publish']).lower()}\n"
+                    f"crs_ref={rules.crs_ref}\n")
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python3 -m patterns",
@@ -275,6 +317,19 @@ def _parser() -> argparse.ArgumentParser:
     compare.add_argument("--limit", type=int, default=25,
                          help="how many rules to list under each heading (default: 25)")
     compare.set_defaults(run=_diff)
+
+    pack = commands.add_parser("package", help="the files of a release, and what to call it")
+    pack.add_argument("--out", type=Path, required=True, help="where the release files go")
+    pack.add_argument("--source", type=Path, default=DEFAULT_OUT, help="the directory with a directory per target")
+    pack.add_argument("--rules", type=Path, default=ir.DEFAULT_INPUT, help="the IR the output was built from")
+    pack.add_argument("--coverage", type=Path, default=DEFAULT_OUT / COVERAGE_FILE)
+    pack.add_argument("--changes", type=Path, default=Path("changes.json"))
+    pack.add_argument("--date", help="YYYY-MM-DD, UTC (default: today)")
+    pack.add_argument("--commit", default="", help="the commit the release is of")
+    pack.add_argument("--run-url", default="", help="the url of the workflow run")
+    pack.add_argument("--existing-tags", type=Path, help="a file with the tags that are releases, one a line")
+    pack.add_argument("--previous-sums", type=Path, help="the previous release's SHA256SUMS")
+    pack.set_defaults(run=_package)
     return parser
 
 

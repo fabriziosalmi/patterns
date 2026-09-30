@@ -4,12 +4,21 @@ permissions:
   contents: write  # Commit and push what was built, and publish the release
   issues: write    # Open an issue when the build fails its checks
   actions: read    # Required for checking out the repository
+  id-token: write  # Sign with the identity of this run (Sigstore, no key to keep)
+  attestations: write  # Attest where the files come from
 
 # The order of this job is the point of it:
 #
 #   build   fetch the rules, compile them for every target, refresh the tables
 #   gate    run the tests on what was just built
 #   publish commit, push and release, only if every check above passed
+#
+# A release is a dated tag that is never deleted (`2026-09-30-crs-v4.29.0`): the day
+# it was built and the CRS tag it was built from. Its archives are the same bytes
+# for the same files, every file is signed with this run's identity, and the files
+# and the rules they come from are attested. A night that would say nothing the last
+# release did not publishes nothing. `latest` is GitHub's name for the newest release,
+# not a tag that is replaced. See patterns/release.py and docs/verify.md.
 #
 # It used to build, then commit, then release, and never tested: the commit step
 # ran `git add .` and then `git diff --quiet`, which compares the working tree
@@ -112,6 +121,7 @@ jobs:
       run: |
         { python3 tests/test_coverage.py \
           && python3 tests/test_corpus.py \
+          && python3 tests/test_release.py \
           && python3 tests/test_diff.py \
           && python3 tests/test_cli.py; } 2>&1 | tee -a gate.log
 
@@ -140,30 +150,91 @@ jobs:
           git push
         fi
 
-    - name: 📦 Create Zip Archives
-      if: github.ref == 'refs/heads/main'
-      run: |
-        mkdir -p dist
-        (cd waf_patterns/nginx && zip -r ../../dist/nginx_waf.zip .)
-        (cd waf_patterns/apache && zip -r ../../dist/apache_waf.zip .)
-        (cd waf_patterns/traefik && zip -r ../../dist/traefik_waf.zip .)
-        (cd waf_patterns/haproxy && zip -r ../../dist/haproxy_waf.zip .)
+    # --- Release ------------------------------------------------------------
+    # Everything from here to the publish step also runs on a branch, so that the
+    # signing can be tried without releasing: what a branch run signs it keeps as
+    # an artifact of the run.
 
-    - name: 🗑️ Delete Existing 'latest' Tag and Release (if they exist)
-      if: github.ref == 'refs/heads/main'
-      run: |
-        # Delete local tag
-        git tag -d latest || true
-        # Delete remote tag (force)
-        git push --delete origin latest || true
-        # Delete release, --yes for confirmation
-        gh release delete latest --yes || true
+    - name: 📦 Package the release
+      id: package
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        mkdir -p previous
+        # The tags that are releases, so a name is never used twice, and the hashes
+        # of the last one, to say whether this one would add anything.
+        gh release list --limit 1000 --json tagName --jq '.[].tagName' > existing-tags.txt || : > existing-tags.txt
+        PREVIOUS=$(gh release view --json tagName --jq .tagName 2>/dev/null || true)
+        if [ -n "$PREVIOUS" ]; then
+          gh release download "$PREVIOUS" --pattern SHA256SUMS --dir previous 2>/dev/null || true
+        fi
+        echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        python3 -m patterns package --out dist \
+          --commit "$(git rev-parse HEAD)" \
+          --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+          --existing-tags existing-tags.txt --previous-sums previous/SHA256SUMS | tee -a gate.log
 
+    - name: 🔏 Install cosign
+      uses: sigstore/cosign-installer@v4
+
+    # Keyless: the signature is made with the identity of this workflow run, which
+    # Sigstore certifies for a few minutes and records in a public log. There is no
+    # key to keep or to lose. Each file gets a `.sigstore.json` bundle holding the
+    # signature, the certificate and the log entry.
+    - name: 🔏 Sign every file, and check that a signature is what it says it is
+      env:
+        IDENTITY: ${{ github.server_url }}/${{ github.workflow_ref }}
+        ISSUER: https://token.actions.githubusercontent.com
+      run: |
+        cd dist
+        for file in *; do
+          cosign sign-blob --yes --bundle "$file.sigstore.json" "$file"
+        done
+        for file in $(ls | grep -v '\.sigstore\.json$'); do
+          cosign verify-blob --bundle "$file.sigstore.json" \
+            --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER" "$file"
+        done
+        # A copy with one byte changed must not verify.
+        cp nginx_waf.zip "$RUNNER_TEMP/tampered.zip" && printf 'x' >> "$RUNNER_TEMP/tampered.zip"
+        if cosign verify-blob --bundle nginx_waf.zip.sigstore.json \
+             --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER" \
+             "$RUNNER_TEMP/tampered.zip" 2>/dev/null; then
+          echo "a modified archive verified: the signature checks nothing" >&2
+          exit 1
+        fi
+        echo "a modified copy is refused, as it should be"
+
+    - name: 🔏 Attest where the files come from
+      uses: actions/attest-build-provenance@v4
+      with:
+        subject-checksums: dist/SHA256SUMS
+
+    # The provenance says which commit and workflow built the files. This says which
+    # rules they are: the CRS tag, and the hash of the rules it was read into.
+    - name: 🔏 Attest which rules they were built from
+      uses: actions/attest@v4
+      with:
+        subject-checksums: dist/SHA256SUMS
+        predicate-type: https://github.com/fabriziosalmi/patterns/attestations/rules/v1
+        predicate-path: dist/rules-predicate.json
+
+    - name: 📤 Keep the signed files of a run that is not a release
+      if: github.ref != 'refs/heads/main'
+      uses: actions/upload-artifact@v7
+      with:
+        name: signed-release-${{ github.run_id }}
+        path: dist/
+        retention-days: 7
+
+    - name: 📝 Say that nothing changed
+      if: steps.package.outputs.publish == 'false'
+      run: |
+        echo "The rules and what each target does with them are what the last release has, so there is no new release." | tee -a "$GITHUB_STEP_SUMMARY"
 
     - name: 📝 Generate release notes
-      if: success() && github.ref == 'refs/heads/main'
+      if: success() && github.ref == 'refs/heads/main' && steps.package.outputs.publish == 'true'
+      env:
+        RELEASE_TAG: ${{ steps.package.outputs.tag }}
       run: |
         set -euo pipefail
 
@@ -233,7 +304,7 @@ jobs:
         ### Quick install
 
         \`\`\`bash
-        curl -LO https://github.com/fabriziosalmi/patterns/releases/latest/download/nginx_waf.zip
+        curl -LO https://github.com/fabriziosalmi/patterns/releases/download/${RELEASE_TAG}/nginx_waf.zip
         unzip nginx_waf.zip -d /etc/nginx/waf_patterns
         \`\`\`
 
@@ -245,7 +316,19 @@ jobs:
 
         The verdict for every rule and target is in \`coverage.json\`, attached to this release. [How to read it](https://fabriziosalmi.github.io/patterns/coverage).
 
-        ### Verify (SHA-256)
+        ### Verify
+
+        This release is \`${RELEASE_TAG}\`, and it stays: releases are never deleted or replaced, so a link to this tag is a link to these files. Every file in it is signed by the workflow that built it, and attested. \`SHA256SUMS\` lists their hashes and is signed with the rest.
+
+        \`\`\`bash
+        cosign verify-blob --bundle nginx_waf.zip.sigstore.json \\
+          --certificate-identity https://github.com/fabriziosalmi/patterns/.github/workflows/update_patterns.yml@refs/heads/main \\
+          --certificate-oidc-issuer https://token.actions.githubusercontent.com nginx_waf.zip
+        \`\`\`
+
+        [Every step, and how to pin to a release](https://fabriziosalmi.github.io/patterns/verify).
+
+        ### SHA-256
 
         \`\`\`text
         ${NGINX_SHA}  nginx_waf.zip
@@ -265,20 +348,18 @@ jobs:
 
         echo "Generated release_notes.md ($(wc -l < release_notes.md) lines)"
 
+    # The tag is new every time and is never deleted. `make_latest` is what makes
+    # `releases/latest/download/...` point here: GitHub's name for the newest, not a
+    # tag that is replaced.
     - name: 🚀 Publish release
-      if: success() && github.ref == 'refs/heads/main'
+      if: success() && github.ref == 'refs/heads/main' && steps.package.outputs.publish == 'true'
       uses: softprops/action-gh-release@v3
       with:
-        tag_name: latest
-        name: WAF rules (Nginx, Apache, Traefik, Haproxy)
+        tag_name: ${{ steps.package.outputs.tag }}
+        target_commitish: ${{ steps.package.outputs.commit }}
+        name: WAF rules ${{ steps.package.outputs.tag }}
         body_path: release_notes.md
-        files: |
-          dist/nginx_waf.zip
-          dist/apache_waf.zip
-          dist/traefik_waf.zip
-          dist/haproxy_waf.zip
-          waf_patterns/coverage.json
-          changes.json
+        files: dist/*
         make_latest: 'true'
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

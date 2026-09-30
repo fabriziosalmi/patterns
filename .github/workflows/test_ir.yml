@@ -75,6 +75,11 @@ jobs:
     - name: Test the corpus of ordinary traffic
       run: python3 tests/test_corpus.py
 
+    # What a release is made of and what it is called: archives that are the same
+    # bytes for the same files, the tag, and that nothing is ever deleted.
+    - name: Test the release
+      run: python3 tests/test_release.py
+
     # What changed between two versions of the rules, rule by rule and target by
     # target.
     - name: Test the diff between releases
