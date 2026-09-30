@@ -32,6 +32,16 @@ def provenance_header(crs_ref: str, title: str) -> str:
     )
 
 
+def without_handled_syntax(argument: str) -> str:
+    """
+    What a regular expression is once the syntax a backend handles another way
+    is taken out: `(?i)`, which it replaces with a case-insensitive match, and
+    `(?:`, which it writes as `(`. Neither changes what the expression matches,
+    so a backend that writes anything else has rewritten it.
+    """
+    return argument.replace("(?i)", "").replace("(?:", "(").strip()
+
+
 @lru_cache(maxsize=256)
 def validate_regex(pattern: str) -> bool:
     """Reports whether Python's `re` compiles the pattern."""

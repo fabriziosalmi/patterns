@@ -65,5 +65,13 @@ jobs:
     - name: Test the command line and the build
       run: python3 tests/test_cli.py
 
+    # What each target does with each rule, and that the matrix counts what the
+    # files hold.
+    - name: Test the coverage matrix
+      run: python3 tests/test_coverage.py
+
     - name: Fail if the committed output is stale
       run: python3 -m patterns build --all --check
+
+    - name: Fail if the coverage tables are stale
+      run: python3 -m patterns coverage --check

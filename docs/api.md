@@ -41,6 +41,9 @@ python3 -m patterns build --all                   # every target into waf_patter
 python3 -m patterns build --target nginx          # one; repeat --target for several
 python3 -m patterns build --all --out /tmp/out    # somewhere else: /tmp/out/<target>/
 python3 -m patterns build --all --check           # write nothing; exit 1 if the files on disk are stale
+python3 -m patterns coverage                      # what each target does with each rule
+python3 -m patterns coverage --write              # put that table in README.md and docs/coverage.md
+python3 -m patterns coverage --check              # exit 1 if those tables are out of date
 ```
 
 | Option | Default | Purpose |
@@ -49,6 +52,8 @@ python3 -m patterns build --all --check           # write nothing; exit 1 if the
 | `--input FILE` | `owasp_rules.json` | The IR. |
 | `--out DIR` | `waf_patterns` | The directory each target's directory goes in. |
 | `--check` | off | Compare instead of write. This is how CI tells that the committed output is not what the IR produces. |
+
+`build --all` also writes `coverage.json` next to the targets: a verdict for every rule and target, which [Coverage](/coverage) explains. It refuses to write anything if a backend would write a regular expression its target's engine does not compile.
 
 The same IR gives the same files, byte for byte, whatever the hash seed or the machine, **on Python 3.11 or later**. The backends keep a pattern only if Python's `re` compiles it, and from 3.11 `re` rejects a global flag such as `(?i)` that is not at the start of the pattern, where 3.9 accepts it: four Apache rules are in one output and not in the other. `build` warns on an older Python, and the committed files are the 3.11 ones. Exit codes: 0 on success, 1 when a file cannot be read or `--check` finds a difference, 2 on a usage error.
 
@@ -244,7 +249,8 @@ The converters currently read two older fields, `pattern` and `location`, and va
 ### Adding a new platform
 
 1. Copy one of the modules in `patterns/backends/` as a starting point.
-2. In it, define a `Backend` subclass with a `name` (what `--target` takes), a `title` (how generated files name the target) and `render(ir)`, which returns `{relative path: content}` and writes nothing. Decorate it with `@register`. Implement `_sanitize_pattern()` for the target syntax: escape rules differ between Nginx, Apache, HAProxy, &hellip;
+2. In it, define a `Backend` subclass with a `name` (what `--target` takes), a `title` (how generated files name the target) and `compile(ir)`, which returns `Compiled(files, decisions)` and writes nothing: `files` is `{relative path: content}`, and `decisions` has one `Decision` per rule, recorded where the backend writes the rule or drops it (with a reason from `patterns.coverage.REASONS`). Decorate it with `@register`. Implement `_sanitize_pattern()` for the target syntax: escape rules differ between Nginx, Apache, HAProxy, &hellip;
+   Declare `capabilities` too: the regular expression dialect, the operators and transformations the backend *writes* (not what the target could do), whether it honours case-insensitivity, and the request components it matches on. The [coverage matrix](/coverage) is computed from it, and `tests/test_coverage.py` fails if a declaration claims something the output does not show.
 3. Add the module to the import list at the bottom of `patterns/backends/__init__.py`. That is the whole registration.
 4. Run `python3 -m patterns build --target <name>` and commit the result under `waf_patterns/<name>/`. `build --all --check` in CI keeps it current.
 5. Add a zip step in `.github/workflows/update_patterns.yml` to package the result.

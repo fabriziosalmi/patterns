@@ -43,6 +43,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from patterns import backends  # noqa: E402
+from patterns.backends import Compiled  # noqa: E402
 from patterns.ir import IR  # noqa: E402
 
 failures = 0
@@ -108,7 +109,11 @@ try:
     out_a = tmp / "a"
     code, _, _ = patterns("build", "--all", "--out", str(out_a))
     check("builds every target", code, 0)
-    check("one directory per target", sorted(p.name for p in out_a.iterdir()), sorted(TARGETS))
+    check("one directory per target, and the coverage matrix beside them",
+          sorted(p.name for p in out_a.iterdir()), sorted(TARGETS + ["coverage.json"]))
+    code, _, _ = patterns("build", "--target", "nginx", "--out", str(tmp / "one"))
+    check("a build of one target writes no coverage matrix",
+          sorted(p.name for p in (tmp / "one").iterdir()), ["nginx"])
     check("nginx writes its maps, its rules and its README",
           sorted(p.name for p in (out_a / "nginx").iterdir()),
           ["README.md", "waf_maps.conf", "waf_rules.conf"])
@@ -132,6 +137,8 @@ try:
         check("build --all --check passes on the committed waf_patterns/", (code, out.strip()),
               (0, "nginx, apache, traefik, haproxy: output matches owasp_rules.json"))
         committed = tree(REPO_ROOT / "waf_patterns")
+        check("coverage.json is the file committed",
+              (out_a / "coverage.json").read_bytes() == committed["coverage.json"], True)
         for target in TARGETS:
             built = tree(out_a / target)
             check(f"{target}: every file built is the file committed",
@@ -162,6 +169,8 @@ try:
         destination = tmp / f"seed{seed}"
         patterns("build", "--all", "--out", str(destination), seed=seed)
         by_seed[seed] = tree(destination)
+    check("coverage.json: three hash seeds, the same bytes",
+          by_seed[1]["coverage.json"] == by_seed[2]["coverage.json"] == by_seed[3]["coverage.json"], True)
     for target in TARGETS:
         names = {s: {n for n in t if n.startswith(target + "/")} for s, t in by_seed.items()}
         differing = sorted(
@@ -174,8 +183,8 @@ try:
         name = "dummy"
         title = "Dummy"
 
-        def render(self, ir):
-            return {"rules.txt": f"{len(ir.rules)} rules from {ir.crs_ref}\n"}
+        def compile(self, ir):
+            return Compiled({"rules.txt": f"{len(ir.rules)} rules from {ir.crs_ref}\n"})
 
     backends.register(Dummy)
     try:

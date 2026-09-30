@@ -4,9 +4,10 @@ from collections import defaultdict
 from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
 
-from patterns.backends import Backend, register
+from patterns.backends import Backend, Capabilities, Compiled, Decision, Target, register
 from patterns.backends._common import provenance_header
 from patterns.corpus import BENIGN, VARIABLE_FIELDS
+from patterns.dialects import python_equivalent
 from patterns.ir import IR
 
 logger = logging.getLogger(__name__)
@@ -20,45 +21,19 @@ logger = logging.getLogger(__name__)
 # signatures.
 CONVERTIBLE_OPERATOR = "@rx"
 
-# The PCRE constructs Python's re does not parse. nginx matches with PCRE and
-# this module checks with Python's re, which is close but not identical, so a
-# handful of valid rules would be discarded as malformed. Each entry rewrites
-# one construct into something Python accepts. The rewrite is used only for the
-# check: what gets emitted is always the pattern CRS wrote.
-_PCRE_ONLY = (
-    # \x{263a}: a hex escape wider than two digits.
-    (re.compile(r"(?<!\\)\\x\{([0-9A-Fa-f]{1,6})\}"),
-     lambda m: ("\\u%04x" if int(m.group(1), 16) <= 0xFFFF else "\\U%08x")
-     % int(m.group(1), 16)),
-    # \z: end of subject. Python spells it \Z.
-    (re.compile(r"(?<!\\)\\z"), lambda m: "\\Z"),
-    # (?<name>...): Python requires (?P<name>...).
-    (re.compile(r"\(\?<([A-Za-z_]\w*)>"), lambda m: "(?P<%s>" % m.group(1)),
-    # (?>...): an atomic group. Python 3.11 has them, earlier versions do not.
-    (re.compile(r"\(\?>"), lambda m: "(?:"),
-)
-
-
-def _python_equivalent(pattern: str) -> str:
-    """Rewrites PCRE-only syntax so Python's re can parse the pattern."""
-    for expression, replacement in _PCRE_ONLY:
-        pattern = expression.sub(replacement, pattern)
-    return pattern
-
-
 @lru_cache(maxsize=256)  # Increased cache size
 def validate_regex(pattern: str) -> bool:
     """Reports whether a pattern is a regular expression nginx could compile."""
     try:
-        re.compile(_python_equivalent(pattern))
+        re.compile(python_equivalent(pattern))
         return True
     except re.error as e:
         logger.warning(f"Invalid regex: {pattern} - {e}")
         return False
 
-def sanitize_pattern(pattern: str, location: str) -> Optional[str]:
+def explain_pattern(pattern: str) -> Tuple[Optional[str], Optional[Tuple[str, str]]]:
     """
-    Returns the regular expression a rule matches with, or None if it has none.
+    Returns the regular expression a rule matches with, or why it has none.
 
     A ModSecurity operator decides whether a rule is a regular expression at
     all. Only `@rx` is; the rest are numeric comparisons, phrase lists, file
@@ -73,24 +48,34 @@ def sanitize_pattern(pattern: str, location: str) -> Optional[str]:
     across characters, `foo$` anchors, `\\x{62}` matches a b, and `(?<!no)bad`
     applies the lookbehind. What needs care is the configuration parser rather
     than the regex, and that is _escape_for_config's job.
+
+    Returns:
+        (the expression, None) or (None, (reason code, detail)).
     """
     stripped = pattern.strip()
     if stripped.startswith("!"):
         # A negated operator inverts the match, which a map key cannot express.
         logger.debug(f"Skipping negated operator: {pattern}")
-        return None
+        return None, ("operator-unsupported", "negated: a map key says what matches, not what does not")
     if stripped.startswith("@"):
         if not stripped.startswith(CONVERTIBLE_OPERATOR + " "):
             operator = stripped.split(None, 1)[0]
             logger.debug(f"Skipping non-regex operator {operator}: {pattern}")
-            return None
+            return None, ("operator-unsupported", operator)
         stripped = stripped[len(CONVERTIBLE_OPERATOR):].strip()
 
     # Every map key is matched case-insensitively or not by the ~ prefix
     # is_case_insensitive picks, so an inline (?i) is redundant. It is removed
     # rather than kept because nginx rejects it anywhere but the start.
     stripped = stripped.replace("(?i)", "").strip()
-    return stripped or None
+    if not stripped:
+        return None, ("empty-pattern", "nothing is left once the operator and (?i) are removed")
+    return stripped, None
+
+
+def sanitize_pattern(pattern: str, location: str) -> Optional[str]:
+    """The regular expression a rule matches with, or None if it has none."""
+    return explain_pattern(pattern)[0]
 
 
 def is_case_insensitive(pattern: str, transformations: List[str]) -> bool:
@@ -229,7 +214,7 @@ def fires_on_ordinary_traffic(pattern: str, variable: str,
     if field is None:
         return None
     try:
-        expression = re.compile(_python_equivalent(pattern),
+        expression = re.compile(python_equivalent(pattern),
                                 re.IGNORECASE if ignore_case else 0)
     except re.error:
         return None
@@ -264,7 +249,7 @@ def exclusion_report(not_blocking: int, too_long: int,
     return "".join(lines)
 
 
-def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest") -> Dict[str, str]:
+def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest") -> Compiled:
     """Builds the Nginx WAF configuration: maps, rules and a README."""
 
     # source variable -> list of "key value" map entries
@@ -273,25 +258,32 @@ def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest") -> Dict[str, 
     skipped_too_long = 0
     skipped_not_blocking = 0
     excluded_as_noisy: List[Tuple[str, str, str]] = []
+    decisions: List[Decision] = []
 
-    for rule in rules:
+    for index, rule in enumerate(rules):
         rule_id = rule.get("id", "no_id")  # Get rule ID
         category = rule.get("category", "generic").lower()
         location = rule.get("location", "request-uri").lower() # set a default location
         pattern = rule["pattern"]
         severity = rule.get("severity", "medium").lower() # get severity
 
-        sanitized_pattern = sanitize_pattern(pattern, location)
-        if not sanitized_pattern or not validate_regex(sanitized_pattern):
-            continue  # Skip invalid or unsupported patterns
+        sanitized_pattern, why = explain_pattern(pattern)
+        if not sanitized_pattern:
+            decisions.append(Decision(index, False, *why))
+            continue  # Skip unsupported patterns
+        if not validate_regex(sanitized_pattern):
+            decisions.append(Decision(index, False, "invalid-regex", "Python's re does not compile it"))
+            continue  # Skip invalid patterns
 
         variable = LOCATION_VARIABLES.get(location)
         if variable is None:
             logger.warning(f"Unsupported location: {location} for rule: {rule_id}")
+            decisions.append(Decision(index, False, "location-unsupported", location))
             continue
 
         if not blocks(rule):
             skipped_not_blocking += 1
+            decisions.append(Decision(index, False, "not-blocking", str(rule.get("action"))))
             continue
 
         # nginx reads the map key as a double-quoted string, so an unescaped
@@ -305,6 +297,7 @@ def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest") -> Dict[str, 
         ordinary = fires_on_ordinary_traffic(sanitized_pattern, variable, ignore_case)
         if ordinary is not None:
             excluded_as_noisy.append((rule_id, category, ordinary))
+            decisions.append(Decision(index, False, "matches-benign-traffic", ordinary))
             continue
 
         prefix = "~*" if ignore_case else "~"
@@ -319,6 +312,8 @@ def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest") -> Dict[str, 
                 f"Skipping rule {rule_id}: key is {len(key.encode('utf-8'))} "
                 f"bytes, over nginx's {NGINX_MAX_PARAMETER}-byte parameter limit"
             )
+            decisions.append(Decision(index, False, "parameter-too-long",
+                                      f"{len(key.encode('utf-8'))} bytes"))
             continue
 
         # The value carries the severity and the category, so an operator can
@@ -326,6 +321,7 @@ def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest") -> Dict[str, 
         severities_seen.add(severity)
         value = f'"{severity}:{_sanitize_name(category)}"'
         entries_by_variable[variable].append(f"  {key} {value};")
+        decisions.append(Decision(index, True, location=location, pattern=sanitized_pattern))
 
     if skipped_too_long:
         logger.warning(
@@ -468,11 +464,11 @@ def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest") -> Dict[str, 
 
     logger.info(f"Generated Nginx waf_maps.conf, waf_rules.conf and README.md "
                 f"({sum(len(e) for e in entries_by_variable.values())} entries)")
-    return {
+    return Compiled({
         "waf_maps.conf": "".join(maps),
         "waf_rules.conf": "".join(rules_out),
         "README.md": "".join(readme),
-    }
+    }, decisions)
 
 
 @register
@@ -480,5 +476,25 @@ class Nginx(Backend):
     name = "nginx"
     title = "Nginx"
 
-    def render(self, ir: IR) -> Dict[str, str]:
+    # What nginx can express, and what the backend writes of it. A map key is one
+    # regular expression matched against one request variable, after nothing:
+    # the only transformation the output has is case, through the `~*` prefix.
+    capabilities = Capabilities(
+        dialect="pcre",
+        operators=frozenset({"rx"}),
+        transformations=frozenset({"lowercase"}),
+        case_insensitive=True,
+        locations={
+            "request-uri": Target("$request_uri"),
+            "query-string": Target(
+                "$args", "the query string only: arguments in the request body are not seen"),
+            "user-agent": Target("$http_user_agent"),
+            "host": Target("$http_host"),
+            "referer": Target("$http_referer"),
+            "content-type": Target("$http_content_type"),
+        },
+        faithful=lambda argument: argument.replace("(?i)", "").strip(),
+    )
+
+    def compile(self, ir: IR) -> Compiled:
         return generate_nginx_waf(ir.rules, ir.crs_ref)

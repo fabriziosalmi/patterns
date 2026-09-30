@@ -123,6 +123,10 @@ jobs:
         TRAEFIK_SHA=$(sha256sum dist/traefik_waf.zip | cut -d' ' -f1)
         HAPROXY_SHA=$(sha256sum dist/haproxy_waf.zip | cut -d' ' -f1)
 
+        # What each target does with each rule, from the record the files were
+        # built from (waf_patterns/coverage.json).
+        COVERAGE_TABLE=$(python3 -m patterns coverage)
+
         cat > release_notes.md <<EOF
         **Patterns build · ${BUILD_DATE}**
 
@@ -147,6 +151,12 @@ jobs:
         \`\`\`
 
         Integration guides → [Nginx](https://fabriziosalmi.github.io/patterns/nginx) · [Apache](https://fabriziosalmi.github.io/patterns/apache) · [Traefik](https://fabriziosalmi.github.io/patterns/traefik) · [HAProxy](https://fabriziosalmi.github.io/patterns/haproxy)
+
+        ### What each target does with each rule
+
+        ${COVERAGE_TABLE}
+
+        The verdict for every rule and target is in \`coverage.json\`, attached to this release. [How to read it](https://fabriziosalmi.github.io/patterns/coverage).
 
         ### Verify (SHA-256)
 
@@ -180,6 +190,7 @@ jobs:
           dist/apache_waf.zip
           dist/traefik_waf.zip
           dist/haproxy_waf.zip
+          waf_patterns/coverage.json
         make_latest: 'true'
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

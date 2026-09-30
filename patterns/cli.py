@@ -5,24 +5,40 @@ The command line: `python3 -m patterns <command>`.
     validate [--input FILE]      check an IR file against its schema
     build --target T | --all     compile the IR into a target's files
           [--input FILE] [--out DIR] [--check]
+    coverage [--json]            what each target does with each rule
+             [--write | --check]
 
 `build` writes each target under `--out` (default `waf_patterns`) in a directory
-named after it. With `--check` it writes nothing and exits 1 if the files on
-disk are not what the IR produces, which is how CI tells a stale commit.
+named after it, and with `--all` the coverage matrix as `coverage.json` beside
+them. It refuses to write anything if a target would write a regular expression
+its engine does not compile. With `--check` it writes nothing and exits 1 if the
+files on disk are not what the IR produces, which is how CI tells a stale commit.
+
+`coverage` prints the matrix as a table. `--write` puts that table in the files
+that show it (README.md and docs/coverage.md, between `coverage:start` and
+`coverage:end`), and `--check` exits 1 if they are out of date.
 """
 
 import argparse
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from patterns import backends, ir
+from patterns import backends, coverage, ir
+from patterns.backends import Compiled
 
 logger = logging.getLogger("patterns")
 
 DEFAULT_OUT = Path("waf_patterns")
+COVERAGE_FILE = "coverage.json"
+
+# Where the coverage table is shown. Each file holds one block of it, between
+# these two lines, and `coverage --write` replaces what is between them.
+COVERAGE_DOCS = ("README.md", "docs/coverage.md")
+_BLOCK = re.compile(r"(<!-- coverage:start -->\n)(.*?)(<!-- coverage:end -->)", re.DOTALL)
 
 # The backends ask Python's `re` whether a pattern compiles, and `re` changed.
 # From 3.11 a global flag such as `(?i)` anywhere but the start of the pattern is
@@ -43,21 +59,14 @@ def _warn_if_python_is_old() -> None:
             "do not have.", *sys.version_info[:2], *OUTPUT_PYTHON)
 
 
-def build_target(target: str, rules: ir.IR, directory: Path, check: bool = False) -> List[str]:
+def write_files(files: Dict[str, str], directory: Path, check: bool = False) -> List[str]:
     """
-    Builds one target into `directory`, or compares what is there.
-
-    Args:
-        target: A registered backend name.
-        rules: The IR.
-        directory: Where the target's files go.
-        check: Compare instead of write.
+    Writes files into `directory`, or compares what is there.
 
     Returns:
         With `check`, what is wrong: one line per file that is missing or
         differs. Empty otherwise, and empty when everything matches.
     """
-    files: Dict[str, str] = backends.get(target).render(rules)
     problems: List[str] = []
     for relative in sorted(files):
         path = directory / relative
@@ -72,6 +81,22 @@ def build_target(target: str, rules: ir.IR, directory: Path, check: bool = False
         path.write_bytes(content)
         logger.info(f"Wrote {path}")
     return problems
+
+
+def build_target(target: str, rules: ir.IR, directory: Path, check: bool = False) -> List[str]:
+    """
+    Builds one target into `directory`, or compares what is there.
+
+    Args:
+        target: A registered backend name.
+        rules: The IR.
+        directory: Where the target's files go.
+        check: Compare instead of write.
+
+    Returns:
+        With `check`, what is wrong. See `write_files`.
+    """
+    return write_files(backends.get(target).render(rules), directory, check)
 
 
 def _list(args: argparse.Namespace) -> int:
@@ -108,9 +133,31 @@ def _build(args: argparse.Namespace) -> int:
         return 1
     logger.info(f"Loaded {len(rules.rules)} rules ({rules.crs_ref}).")
 
+    compiled: Dict[str, Compiled] = {t: backends.get(t).compile(rules) for t in targets}
+
+    # A regular expression the target's engine refuses is a configuration that
+    # does not load. Nothing is written if a backend would write one.
+    if sys.version_info >= OUTPUT_PYTHON:
+        refused = [line for t in targets
+                   for line in coverage.dialect_problems(backends.get(t), rules, compiled[t])]
+        if refused:
+            for line in refused:
+                print(line, file=sys.stderr)
+            print(f"{len(refused)} expression(s) would not compile on their target; nothing written",
+                  file=sys.stderr)
+            return 1
+    else:
+        logger.warning("Python %d.%d: the regular expressions are not checked against the "
+                       "targets' engines; that needs %d.%d or later.",
+                       *sys.version_info[:2], *OUTPUT_PYTHON)
+
     problems: List[str] = []
     for target in targets:
-        problems += build_target(target, rules, args.out / target, check=args.check)
+        problems += write_files(compiled[target].files, args.out / target, check=args.check)
+    if args.all:
+        matrix = coverage.to_json(coverage.report(
+            rules, {t: (backends.get(t), compiled[t]) for t in targets}))
+        problems += write_files({COVERAGE_FILE: matrix}, args.out, check=args.check)
 
     if args.check:
         for problem in problems:
@@ -120,6 +167,48 @@ def _build(args: argparse.Namespace) -> int:
                   "run `python3 -m patterns build --all` and commit the result", file=sys.stderr)
             return 1
         print(f"{', '.join(targets)}: output matches {args.input}")
+    return 0
+
+
+def _matrix(path: Path) -> Dict:
+    """The coverage matrix of every target, from the IR at `path`."""
+    rules = ir.load(path)
+    return coverage.report(rules, {n: (backends.get(n), backends.get(n).compile(rules))
+                                   for n in backends.names()})
+
+
+def _coverage(args: argparse.Namespace) -> int:
+    # The backends log every rule they drop, which is what this command is here
+    # to summarise.
+    logging.getLogger().setLevel(logging.ERROR)
+    try:
+        data = _matrix(args.input)
+    except (OSError, ValueError) as e:
+        print(f"cannot read {args.input}: {e}", file=sys.stderr)
+        return 1
+    table = coverage.to_markdown(data)
+
+    if not (args.write or args.check):
+        print(coverage.to_json(data) if args.json else table, end="")
+        return 0
+
+    stale: List[str] = []
+    for name in COVERAGE_DOCS:
+        path = ir.REPO_ROOT / name
+        text = path.read_text(encoding="utf-8")
+        if not _BLOCK.search(text):
+            print(f"{name}: no coverage:start / coverage:end block", file=sys.stderr)
+            return 1
+        updated = _BLOCK.sub(lambda m: m.group(1) + table + m.group(3), text)
+        if updated != text:
+            stale.append(name)
+            if args.write:
+                path.write_text(updated, encoding="utf-8")
+                logger.info(f"Updated {name}")
+    if args.check and stale:
+        print(f"{', '.join(stale)}: the coverage table is out of date; "
+              "run `python3 -m patterns coverage --write`", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -147,6 +236,15 @@ def _parser() -> argparse.ArgumentParser:
     build.add_argument("--check", action="store_true",
                        help="write nothing; exit 1 if the files on disk differ from what the IR produces")
     build.set_defaults(run=_build)
+
+    show = commands.add_parser("coverage", help="what each target does with each rule")
+    show.add_argument("--input", type=Path, default=ir.DEFAULT_INPUT, help="the IR file (default: owasp_rules.json)")
+    show.add_argument("--json", action="store_true", help="print coverage.json instead of the table")
+    mode = show.add_mutually_exclusive_group()
+    mode.add_argument("--write", action="store_true", help="put the table in README.md and docs/coverage.md")
+    mode.add_argument("--check", action="store_true",
+                      help="exit 1 if the table in README.md and docs/coverage.md is out of date")
+    show.set_defaults(run=_coverage)
     return parser
 
 

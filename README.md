@@ -82,7 +82,55 @@ replacement for a WAF that can apply transformations and keep score. If you need
 that on `nginx`, use ModSecurity; on Caddy, see
 [`caddy-waf`](https://github.com/fabriziosalmi/caddy-waf).
 
-The other three backends have not been measured this way yet.
+### What each target does with each rule
+
+Whether a rule is written is not the same as whether it means what CRS wrote, so
+every rule gets a verdict per target: written in full, written with a named loss,
+written as something it is not (*unsound*), or dropped with a reason. This is
+generated from the same record the files are built from, for all four targets
+([how to read it](https://fabriziosalmi.github.io/patterns/coverage)):
+
+<!-- coverage:start -->
+Of the 749 records in the CRS v4.29.0 intermediate representation, what each target does:
+
+| Target | Full | Approximate | Unsound | Dropped |
+|---|---:|---:|---:|---:|
+| Nginx | 13 | 161 | 0 | 575 |
+| Apache (ModSecurity) | 0 | 1 | 712 | 36 |
+| Traefik | 0 | 1 | 6 | 742 |
+| HAProxy | 2 | 97 | 403 | 247 |
+
+**Why a record is dropped**, by the first reason the backend found:
+
+| Reason | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
+|---|---:|---:|---:|---:|
+| matched on a request component the target does not have | 96 |  | 685 | 160 |
+| an operator the backend cannot express | 398 | 21 | 3 | 31 |
+| not a rule: it changes another rule | 54 |  | 54 | 54 |
+| the expression does not compile |  | 15 |  | 2 |
+| longer than the target accepts | 16 |  |  |  |
+| it refuses ordinary traffic once converted | 7 |  |  |  |
+| it records and does not refuse | 4 |  |  |  |
+
+**What a written rule loses**, in how many of them:
+
+| Loss | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
+|---|---:|---:|---:|---:|
+| matched on other variables than the rule names | 154 | 633 | 3 | 480 |
+| an operator written as something it is not |  | 373 | 2 | 301 |
+| transformations the rule was written to run after are not applied | 120 | 184 | 2 | 136 |
+| the expression was rewritten |  | 281 | 3 | 100 |
+| a chain written without all of its links | 15 | 121 | 3 | 56 |
+| written although it is not a rule |  | 54 |  |  |
+| case-insensitivity is not honoured |  |  | 3 |  |
+<!-- coverage:end -->
+
+The nginx figures above count the same rules as its row here: 174 written, 7 of
+the dropped ones because they refuse ordinary traffic.
+
+The other three backends have not been run against traffic yet (#59). What the
+table says about them comes from comparing what they write with what each target
+can express, not from sending requests.
 
 ## Highlights
 

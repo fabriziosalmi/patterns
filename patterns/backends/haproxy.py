@@ -2,8 +2,13 @@ import logging
 import re
 from typing import Dict, List, Optional, Tuple
 
-from patterns.backends import Backend, register
-from patterns.backends._common import UNSUPPORTED_FILE_OPERATORS, provenance_header
+from patterns.backends import Backend, Capabilities, Compiled, Decision, Target, register
+from patterns.backends._common import (
+    UNSUPPORTED_FILE_OPERATORS,
+    provenance_header,
+    without_handled_syntax,
+)
+from patterns import dialects
 from patterns.ir import IR
 
 logger = logging.getLogger(__name__)
@@ -75,9 +80,10 @@ def sanitize_pattern(pattern: str, location: str) -> Tuple[Optional[str], str]:
     return pattern, "hdr_sub"
 
 
-def generate_haproxy_conf(rules: List[Dict], crs_ref: str = "latest") -> Dict[str, str]:
+def generate_haproxy_conf(rules: List[Dict], crs_ref: str = "latest") -> Compiled:
     """Builds the HAProxy WAF configuration (waf.acl)."""
 
+    decisions: List[Decision] = []
     try:
         acl_rules: Dict[str, List[str]] = {}  # { location: [acl_rules] }
         int_rules: List[str] = []
@@ -86,7 +92,7 @@ def generate_haproxy_conf(rules: List[Dict], crs_ref: str = "latest") -> Dict[st
         tarpit_low: List[str] = []
 
         # Process each OWASP rule
-        for rule in rules:
+        for index, rule in enumerate(rules):
             rule_id = rule.get("id", "no_id")
             category = rule.get("category", "uncategorized").lower()
             location = rule.get("location", "User-Agent").lower() #important! lowercase
@@ -96,7 +102,18 @@ def generate_haproxy_conf(rules: List[Dict], crs_ref: str = "latest") -> Dict[st
             sanitized_pattern, acl_type = sanitize_pattern(pattern, location)
 
             if sanitized_pattern is None:  # Unsupported/invalid pattern
+                decisions.append(Decision(index, False, "operator-unsupported", next(
+                    (d for d in UNSUPPORTED_PATTERNS if d in pattern), pattern)))
                 continue
+
+            if acl_type == "hdr_reg":
+                # The expression goes to HAProxy as it is, and what its regular
+                # expression engine refuses is a configuration that does not load.
+                problem = dialects.check(HAProxy.capabilities.dialect, sanitized_pattern)
+                if problem:
+                    logger.warning(f"Skipping rule {rule_id}: the expression {problem}")
+                    decisions.append(Decision(index, False, "invalid-regex", problem))
+                    continue
 
             if acl_type == "int": # Int comparison
                 action = "deny" if severity == "high" else "log" if severity == "medium" else "tarpit"
@@ -105,6 +122,7 @@ def generate_haproxy_conf(rules: List[Dict], crs_ref: str = "latest") -> Dict[st
                     int_rules.append(f"http-request {action} if {{ {location} {sanitized_pattern} }}")
                 else:
                     int_rules.append(f"http-request {action} if {{ {location},{sanitized_pattern} }}")
+                decisions.append(Decision(index, True, location=location))
 
             elif acl_type in ("hdr_reg", "hdr_sub"):  # String comparison
                 acl_name = f"block_{category}_{rule_id}"
@@ -120,11 +138,15 @@ def generate_haproxy_conf(rules: List[Dict], crs_ref: str = "latest") -> Dict[st
                      acl_string = f"acl {acl_name} {hdr_func}({location.replace('-','')}) -i {sanitized_pattern}"
                 else:
                     logger.warning(f"Unsupported location: {location} for rule: {rule_id}")
+                    decisions.append(Decision(index, False, "location-unsupported", location))
                     continue  # Skip unsupported locations
 
                 if location not in acl_rules:
                     acl_rules[location] = []
                 acl_rules[location].append(acl_string)
+                decisions.append(Decision(
+                    index, True, location=location,
+                    pattern=sanitized_pattern if acl_type == "hdr_reg" else None))
 
 
                 if severity == "high":
@@ -160,7 +182,7 @@ def generate_haproxy_conf(rules: List[Dict], crs_ref: str = "latest") -> Dict[st
         if tarpit_low:
             out.append(f"http-request tarpit if {' or '.join(tarpit_low)}\n")
 
-        return {"waf.acl": "".join(out)}
+        return Compiled({"waf.acl": "".join(out)}, decisions)
 
     except Exception as e:
         logger.error(f"Error generating HAProxy configuration: {e}")
@@ -172,5 +194,28 @@ class HAProxy(Backend):
     name = "haproxy"
     title = "HAProxy"
 
-    def render(self, ir: IR) -> Dict[str, str]:
+    # ACLs: `hdr_reg`, `path_reg` and `url_param_reg` take a regular expression,
+    # and every one is written with `-i`, so the match ignores case. The operators
+    # OPERATOR_MAP translates one for one are the string comparisons; the numeric
+    # ones are written as comparisons against a request location, which is not
+    # what CRS compares (a transaction variable).
+    capabilities = Capabilities(
+        dialect="pcre",
+        operators=frozenset({"rx", "streq", "contains", "endsWith"}),
+        transformations=frozenset({"lowercase"}),
+        case_insensitive=True,
+        locations={
+            "request-uri": Target("path_reg", "the path: the query string is not part of it"),
+            "query-string": Target(
+                "url_param_reg", "query parameter values: not their names, not the request body",
+                frozenset({"ARGS", "ARGS_NAMES", "QUERY_STRING"})),
+            "user-agent": Target("hdr(useragent)"),
+            "host": Target("hdr(host)"),
+            "referer": Target("hdr(referer)"),
+            "content-type": Target("hdr(contenttype)"),
+        },
+        faithful=without_handled_syntax,
+    )
+
+    def compile(self, ir: IR) -> Compiled:
         return generate_haproxy_conf(ir.rules, ir.crs_ref)

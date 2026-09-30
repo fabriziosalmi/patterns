@@ -74,7 +74,7 @@ export default defineConfig({
         icons,
 
         nav: [
-            { text: 'Documentation', link: '/getting-started', activeMatch: '^/(getting-started|nginx|apache|traefik|haproxy|badbots|api|ir)' },
+            { text: 'Documentation', link: '/getting-started', activeMatch: '^/(getting-started|nginx|apache|traefik|haproxy|badbots|api|ir|coverage)' },
             {
                 text: 'Web Servers',
                 items: [
@@ -111,7 +111,8 @@ export default defineConfig({
                 items: [
                     { text: 'Bad Bot Detection', link: '/badbots' },
                     { text: 'API & Scripts', link: '/api' },
-                    { text: 'Intermediate representation', link: '/ir' }
+                    { text: 'Intermediate representation', link: '/ir' },
+                    { text: 'Coverage', link: '/coverage' }
                 ]
             }
         ],

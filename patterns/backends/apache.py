@@ -3,7 +3,7 @@ import re
 from collections import defaultdict
 from typing import Dict, List
 
-from patterns.backends import Backend, register
+from patterns.backends import Backend, Capabilities, Compiled, Decision, Target, register
 from patterns.backends._common import (
     UNSUPPORTED_FILE_OPERATORS,
     provenance_header,
@@ -44,6 +44,10 @@ def _sanitize_pattern(pattern: str) -> str:
     # in the `owasp2json.py` script.
     return pattern
 
+# The locations _determine_variables knows. Any other is matched on REQUEST_URI.
+_LOCATIONS = ("request-uri", "query-string", "user-agent", "host", "referer", "content-type")
+
+
 def _determine_variables(location: str) -> str:
     """Maps the 'location' field to ModSecurity variables."""
     location = location.lower()  # Normalize to lowercase
@@ -65,8 +69,9 @@ def _determine_variables(location: str) -> str:
         return "REQUEST_URI"  # Default variable
 
 
-def generate_apache_waf(rules: List[Dict], crs_ref: str = "latest") -> Dict[str, str]:
+def generate_apache_waf(rules: List[Dict], crs_ref: str = "latest") -> Compiled:
     """Builds the Apache ModSecurity configuration files, one per category."""
+    decisions: List[Decision] = []
 
     # Rules grouped by category. A dict keeps what was added in the order it was
     # added and still drops duplicates. A set did the second and not the first,
@@ -75,7 +80,7 @@ def generate_apache_waf(rules: List[Dict], crs_ref: str = "latest") -> Dict[str,
     rule_id_counter = 9000000  # Start with a high ID range (OWASP CRS convention)
 
 
-    for rule in rules:
+    for index, rule in enumerate(rules):
         rule_id = rule.get("id", "no_id")  # Get rule ID
         if not isinstance(rule_id, int):  # check if is an int
             # Extract ID from rule and convert to an integer
@@ -103,12 +108,19 @@ def generate_apache_waf(rules: List[Dict], crs_ref: str = "latest") -> Dict[str,
                 break  # Stop after finding the *first* matching operator
 
         # Skip unsupported patterns.
-        if any(unsupported in pattern for unsupported in UNSUPPORTED_FILE_OPERATORS):
+        unsupported = [op for op in UNSUPPORTED_FILE_OPERATORS if op in pattern]
+        if unsupported:
             logger.info(f"[!] Skipping unsupported pattern: {pattern}")
+            decisions.append(Decision(index, False, "operator-unsupported", unsupported[0]))
             continue
 
         sanitized_pattern = _sanitize_pattern(pattern)
-        if not sanitized_pattern or not validate_regex(sanitized_pattern):
+        if not sanitized_pattern:
+            decisions.append(Decision(index, False, "empty-pattern",
+                                      "nothing is left once the operator is removed"))
+            continue
+        if not validate_regex(sanitized_pattern):
+            decisions.append(Decision(index, False, "invalid-regex", "Python's re does not compile it"))
             continue  # Skip invalid regexes
 
         # Determine ModSecurity variables based on 'location'
@@ -126,6 +138,11 @@ def generate_apache_waf(rules: List[Dict], crs_ref: str = "latest") -> Dict[str,
             actions=DEFAULT_ACTIONS,
         )
         categorized_rules[category][rule_str] = None
+        # A location the backend does not know is matched on REQUEST_URI.
+        decisions.append(Decision(
+            index, True,
+            location=location.lower() if location.lower() in _LOCATIONS else "request-uri",
+            pattern=re.escape(sanitized_pattern)))
 
 
     # --- Files ---
@@ -139,7 +156,7 @@ def generate_apache_waf(rules: List[Dict], crs_ref: str = "latest") -> Dict[str,
             *rule_set,
         ])
         logger.info(f"Generated {category}.conf ({len(rule_set)} rules)")
-    return files
+    return Compiled(files, decisions)
 
 
 @register
@@ -147,5 +164,25 @@ class Apache(Backend):
     name = "apache"
     title = "Apache (ModSecurity)"
 
-    def render(self, ir: IR) -> Dict[str, str]:
+    # ModSecurity can apply transformations and keeps the operator, and this
+    # backend writes neither: `t:none`, and the pattern escaped into a literal.
+    capabilities = Capabilities(
+        dialect="pcre",
+        operators=frozenset({"rx"}),
+        transformations=frozenset(),
+        case_insensitive=True,
+        locations={
+            "request-uri": Target("REQUEST_URI"),
+            "query-string": Target(
+                "ARGS", "the parsed argument values: their names and the raw query string "
+                        "are other variables",
+                frozenset({"ARGS_NAMES", "QUERY_STRING"})),
+            "user-agent": Target("REQUEST_HEADERS:User-Agent"),
+            "host": Target("REQUEST_HEADERS:Host"),
+            "referer": Target("REQUEST_HEADERS:Referer"),
+            "content-type": Target("REQUEST_HEADERS:Content-Type"),
+        },
+    )
+
+    def compile(self, ir: IR) -> Compiled:
         return generate_apache_waf(ir.rules, ir.crs_ref)
