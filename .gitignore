@@ -70,3 +70,6 @@ Thumbs.db
 .claude/
 gate.log
 issue.md
+previous_rules.json
+changes.json
+changes.md

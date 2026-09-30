@@ -57,6 +57,11 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
+    # What was committed is what the last release was built from, so it is what
+    # this one is compared with.
+    - name: 🕷️ Keep the previous rules, to say what changed
+      run: cp owasp_rules.json previous_rules.json
+
     - name: 🕷️ Run OWASP Scraper
       run: python owasp2json.py
       env:
@@ -73,6 +78,11 @@ jobs:
     # The tables in the README and docs/coverage.md follow the rules.
     - name: 🔄 Refresh the coverage tables
       run: python3 -m patterns coverage --write
+
+    # Which rules changed, and what that does to each target. It reports and does
+    # not judge; the gate below does.
+    - name: 🔄 Say what changed since the previous rules
+      run: python3 -m patterns diff previous_rules.json owasp_rules.json --json changes.json | tee changes.md
 
     # --- Gate ---------------------------------------------------------------
     # Everything below runs on what was just built, and nothing is committed or
@@ -101,6 +111,7 @@ jobs:
     - name: 🚦 What each target does with each rule
       run: |
         { python3 tests/test_coverage.py \
+          && python3 tests/test_diff.py \
           && python3 tests/test_cli.py; } 2>&1 | tee -a gate.log
 
     # These three record what each target does today (a known defect, with its
@@ -194,6 +205,7 @@ jobs:
         # What each target does with each rule, from the record the files were
         # built from (waf_patterns/coverage.json).
         COVERAGE_TABLE=$(python3 -m patterns coverage)
+        CHANGES=$(cat changes.md)
 
         cat > release_notes.md <<EOF
         **Patterns build · ${BUILD_DATE}**
@@ -201,6 +213,12 @@ jobs:
         OWASP Core Rule Set [\`coreruleset/coreruleset@${CRS_REF}\`](https://github.com/coreruleset/coreruleset/releases/tag/${CRS_REF}) converted into native WAF rules for four web servers. Generated automatically; no manual edits.
 
         **Coverage:** ${TOTAL_RULES} patterns across ${CATEGORIES} categories &mdash; SQLi, XSS, RCE, LFI, RFI, plus generic anomaly and protocol-violation rules.
+
+        ### What changed since the previous release
+
+        ${CHANGES}
+
+        The whole of it, per rule and per target, is in \`changes.json\`, attached to this release.
 
         ### Backends
 
@@ -259,6 +277,7 @@ jobs:
           dist/traefik_waf.zip
           dist/haproxy_waf.zip
           waf_patterns/coverage.json
+          changes.json
         make_latest: 'true'
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -70,6 +70,11 @@ jobs:
     - name: Test the coverage matrix
       run: python3 tests/test_coverage.py
 
+    # What changed between two versions of the rules, rule by rule and target by
+    # target.
+    - name: Test the diff between releases
+      run: python3 tests/test_diff.py
+
     - name: Fail if the committed output is stale
       run: python3 -m patterns build --all --check
 

@@ -53,6 +53,16 @@ python3 -m patterns coverage --check              # exit 1 if those tables are o
 | `--out DIR` | `waf_patterns` | The directory each target's directory goes in. |
 | `--check` | off | Compare instead of write. This is how CI tells that the committed output is not what the IR produces. |
 
+`diff` compares two IR files by rule and says what the change does to each target:
+
+```bash
+python3 -m patterns diff previous_rules.json owasp_rules.json               # the summary, as Markdown
+python3 -m patterns diff old.json new.json --json changes.json              # and the whole of it
+python3 -m patterns diff old.json new.json --no-targets                     # rules only: no compiling
+```
+
+It reports and does not judge: it exits 0 whatever it finds. The nightly release puts the summary in its notes and attaches `changes.json`; see [Changes between releases](#changes-between-releases).
+
 `build --all` also writes `coverage.json` next to the targets: a verdict for every rule and target, which [Coverage](/coverage) explains. It refuses to write anything if a backend would write a regular expression its target's engine does not compile.
 
 The same IR gives the same files, byte for byte, whatever the hash seed or the machine, **on Python 3.11 or later**. The backends keep a pattern only if Python's `re` compiles it, and from 3.11 `re` rejects a global flag such as `(?i)` that is not at the start of the pattern, where 3.9 accepts it: four Apache rules are in one output and not in the other. `build` warns on an older Python, and the committed files are the 3.11 ones. Exit codes: 0 on success, 1 when a file cannot be read or `--check` finds a difference, 2 on a usage error.
@@ -243,6 +253,24 @@ A JSON document with a `schema_version`, the provenance of the rules, the anomal
 The record above is abridged. Every field, its type and its meaning are in [Intermediate representation](/ir), and the format is specified by [`schema/ir.schema.json`](https://github.com/fabriziosalmi/patterns/blob/main/schema/ir.schema.json).
 
 The converters currently read two older fields, `pattern` and `location`, and validate each pattern with Python's `re.compile` before emitting platform-specific output, so malformed regexes are dropped rather than propagated.
+
+## Changes between releases
+
+`python3 -m patterns diff OLD NEW --json changes.json` writes one document. A rule is found by its CRS id, and a record with none by what it is part of: a link of a chain by the chain and its position (`932207+1`), a `SecRuleUpdateTargetById` by the rule it updates and what it adds (`update:932240:...`). So a rule inserted before it does not make it look changed.
+
+| Key | Meaning |
+|---|---|
+| `format` | The version of this document's shape. |
+| `from`, `to` | `source_ref` (the CRS tag), `schema_version` and `records` of each file. |
+| `compared_on` | The fields a rule was compared on: the IR's, or, if either file predates the IR, the ones both have (then `targets` is absent). |
+| `summary` | `added`, `removed`, `changed`, `unchanged`, `source_ref_changed`. |
+| `added`, `removed` | One record per rule: `id`, `label`, `category`, `rule` (the operator and argument) and `written_by`, the targets that write it. |
+| `changed` | One record per rule: `id`, `label`, `category` and `fields`, each changed field with its `from` and `to`. |
+| `targets` | Per target: `written` (`from`, `to`), `output_changed` (the rules that changed and that the target writes both times: its output changes), and `status_changed` (the rules whose verdict changed, with `from` and `to`). |
+
+The two lists in `targets` are not the same event. A rule that changed and is written both times changes the target's output, which a person reviewing a release wants to know. A rule that a target started or stopped writing is a status change, and is the one to read first: `941100` on HAProxy: `approximate` to `dropped (invalid-regex)`.
+
+One record is a line in each list, in numeric order of id, so the file diffs and compares cleanly.
 
 ## Extending the toolchain
 

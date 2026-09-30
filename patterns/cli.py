@@ -7,12 +7,18 @@ The command line: `python3 -m patterns <command>`.
           [--input FILE] [--out DIR] [--check]
     coverage [--json]            what each target does with each rule
              [--write | --check]
+    diff OLD NEW                 what changed between two versions of the rules
+         [--json FILE] [--no-targets]
 
 `build` writes each target under `--out` (default `waf_patterns`) in a directory
 named after it, and with `--all` the coverage matrix as `coverage.json` beside
 them. It refuses to write anything if a target would write a regular expression
 its engine does not compile. With `--check` it writes nothing and exits 1 if the
 files on disk are not what the IR produces, which is how CI tells a stale commit.
+
+`diff` compares two IR files by rule and, unless `--no-targets`, says what the
+change does to each target. It prints the summary as Markdown and `--json` writes
+the whole of it. It reports and does not judge: it exits 0 whatever it finds.
 
 `coverage` prints the matrix as a table. `--write` puts that table in the files
 that show it (README.md and docs/coverage.md, between `coverage:start` and
@@ -27,7 +33,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from patterns import backends, coverage, ir
+from patterns import backends, coverage, diff, ir
 from patterns.backends import Compiled
 
 logger = logging.getLogger("patterns")
@@ -212,6 +218,20 @@ def _coverage(args: argparse.Namespace) -> int:
     return 0
 
 
+def _diff(args: argparse.Namespace) -> int:
+    logging.getLogger().setLevel(logging.ERROR)
+    try:
+        old, new = ir.load(args.old), ir.load(args.new)
+    except (OSError, ValueError) as e:
+        print(f"cannot read the rules: {e}", file=sys.stderr)
+        return 1
+    change = diff.compare(old, new, targets=not args.no_targets)
+    if args.json:
+        args.json.write_text(diff.to_json(change), encoding="utf-8")
+    print(diff.to_markdown(change, args.limit), end="")
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python3 -m patterns",
@@ -245,6 +265,16 @@ def _parser() -> argparse.ArgumentParser:
     mode.add_argument("--check", action="store_true",
                       help="exit 1 if the table in README.md and docs/coverage.md is out of date")
     show.set_defaults(run=_coverage)
+
+    compare = commands.add_parser("diff", help="what changed between two versions of the rules")
+    compare.add_argument("old", type=Path, help="the earlier IR file")
+    compare.add_argument("new", type=Path, help="the later IR file")
+    compare.add_argument("--json", type=Path, help="write the whole change here (changes.json)")
+    compare.add_argument("--no-targets", action="store_true",
+                         help="do not compile both versions to say what the change does to each target")
+    compare.add_argument("--limit", type=int, default=25,
+                         help="how many rules to list under each heading (default: 25)")
+    compare.set_defaults(run=_diff)
     return parser
 
 
