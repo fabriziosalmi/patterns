@@ -72,6 +72,16 @@ gh attestation verify nginx_waf.zip --repo fabriziosalmi/patterns \
 
 The second prints the CRS tag (`"ref": "v4.29.0"`), its repository, and the hash, version and number of records of the rules the files were built from. The CRS tag is also in the name of the release.
 
+## Immutable releases
+
+From `2026-10-01-crs-v4.29.0-2` on, releases are **immutable on GitHub as well**, not only by this repository's habit of never deleting one. Once a release is published GitHub locks its tag and its files, so not even someone with the repository's keys can replace a file under a name you pinned to, and GitHub attests the release itself. The workflow makes each release as a draft, checks that it holds every file, and publishes it only then, which is the order immutability needs.
+
+```bash
+gh release verify 2026-10-01-crs-v4.29.0-2 --repo fabriziosalmi/patterns
+```
+
+It prints `Release ... verified!` and the hash of each asset. This is a third check beside the signature and the attestation, and it does not replace them. The first release of that day, `2026-10-01-crs-v4.29.0`, predates the setting and is only as immutable as the signatures make it; it is the one that has [the Content-Type bug](https://github.com/fabriziosalmi/patterns/pull/86).
+
 ## What this proves, and what it does not
 
 It proves that the files were built by this repository's release workflow, running on `main`, from the commit `release.json` names, and that nobody changed them afterwards. It does not prove that the rules are good: that is what the [coverage matrix](/coverage), the tests and the gate in front of every release are for. And it only means something if you check the identity above, not just that *a* signature exists.
