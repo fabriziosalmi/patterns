@@ -42,5 +42,5 @@ Log the variables against your own traffic before enforcing anything.
 * **Testing is Crucial:**  Thoroughly test your WAF configuration with a variety of requests (both legitimate and malicious) to ensure it's working correctly and not causing false positives.
 * **False Positives:**  WAF rules, especially those based on regex, can sometimes block legitimate traffic.  Monitor your Nginx logs and adjust the rules as needed.
 * **Performance:** Complex regexes can impact performance.  Use the simplest regex that accurately matches the threat.
-* **Updates:**  Regularly update the OWASP rules (by re-running `owasp2json.py` and `json2nginx.py`) to stay protected against new threats.
+* **Updates:**  Regularly update the OWASP rules (by re-running `owasp2json.py` and `python3 -m patterns build --target nginx`) to stay protected against new threats.
 * **This is not a complete WAF:** This script provides a basic WAF based on pattern matching.  For more comprehensive protection, consider using a dedicated WAF solution like Nginx App Protect or ModSecurity.

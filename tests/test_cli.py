@@ -148,6 +148,20 @@ try:
     check("an old Python says its output may differ",
           ("the output is built with" in err), sys.version_info < (3, 11))
 
+    print("nothing in a target's directory that is not written")
+    # What ships in an archive is the whole directory. The nginx directory held seventeen
+    # per-category files from January 2025 that the generator stopped writing long before
+    # (their regular expressions are the ones #50 fixed, and their header tells people to
+    # include them in a server block, where a `map` is not allowed). A directory holds what
+    # the backend renders, the bad-bot list badbots.py writes, and a README.
+    BOTS = {"nginx": "bots.conf", "apache": "bots.conf", "traefik": "bots.toml", "haproxy": "bots.acl"}
+    for target in TARGETS:
+        rendered = {p.relative_to(out_a / target).as_posix() for p in (out_a / target).rglob("*") if p.is_file()}
+        present = {p.relative_to(REPO_ROOT / "waf_patterns" / target).as_posix()
+                   for p in (REPO_ROOT / "waf_patterns" / target).rglob("*") if p.is_file()}
+        check(f"{target}: every file in the directory is written by something",
+              sorted(present - rendered - {BOTS[target], "README.md"}), [])
+
     print("--check sees what is stale")
     stale = tmp / "stale"
     shutil.copytree(out_a, stale)
