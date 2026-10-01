@@ -46,13 +46,13 @@ matches one regex against one raw request component, and that is all it can do.
 
 So the converted rule set is measured against ordinary traffic and against
 attacks, with `nginx` itself, by [`tests/test_nginx_blocking.py`](tests/test_nginx_blocking.py).
-Against the rules in this repository (the nginx row of the table below), 128
+Against the rules in this repository (the nginx row of the table below), 162
 ordinary requests in twelve categories of what a false positive looks like, and 21
 attacks ([`patterns/corpus.py`](patterns/corpus.py)):
 
 | | |
 |---|---|
-| Ordinary requests refused | **0 of 128** |
+| Ordinary requests refused | **0 of 162** |
 | Attacks refused, sent in clear | **17 of 21** |
 | Attacks refused, percent-encoded | **6 of 21** |
 
@@ -113,8 +113,8 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 
 | Target | Full | Approximate | Unsound | Dropped |
 |---|---:|---:|---:|---:|
-| Nginx | 13 | 159 | 0 | 577 |
-| Apache (ModSecurity) | 9 | 160 | 0 | 580 |
+| Nginx | 11 | 159 | 0 | 579 |
+| Apache (ModSecurity) | 7 | 159 | 0 | 583 |
 | Traefik | 0 | 3 | 0 | 746 |
 | HAProxy | 6 | 160 | 0 | 583 |
 
@@ -126,7 +126,7 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 | matched on a request component the target does not have | 78 | 65 | 561 | 65 |
 | part of a chain, and the target cannot require all of it | 128 | 128 | 128 | 128 |
 | not a rule: it changes another rule | 54 | 54 | 54 | 54 |
-| it refuses ordinary traffic once converted | 8 | 13 |  | 8 |
+| it refuses ordinary traffic once converted | 10 | 16 |  | 8 |
 | longer than the target accepts | 16 |  |  |  |
 | its severity is below what refuses, and the target cannot only record |  |  | 1 | 8 |
 | it records and does not refuse | 1 | 1 |  | 1 |
@@ -135,7 +135,7 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 
 | Loss | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
 |---|---:|---:|---:|---:|
-| matched on other variables than the rule names | 153 | 157 | 3 | 160 |
+| matched on other variables than the rule names | 153 | 156 | 3 | 160 |
 | transformations the rule was written to run after are not applied | 122 | 112 | 2 | 111 |
 <!-- coverage:end -->
 
@@ -159,7 +159,7 @@ expressions HAProxy's parser takes for unmatched quotes, a fetch it does not hav
 hundreds of names, documented as a pattern file that it was not. It is now what was
 documented: pattern files, which HAProxy reads a regular expression to a line, and a
 `waf.cfg` to paste into a `frontend`. The test runs it in a real HAProxy: of the 21
-attacks, 12 are refused in clear and 10 percent-encoded (`url_dec`), and 0 of the 128
+attacks, 12 are refused in clear and 10 percent-encoded (`url_dec`), and 0 of the 162
 ordinary requests.
 
 Apache was not loading until [#55](https://github.com/fabriziosalmi/patterns/issues/55):
@@ -167,7 +167,7 @@ it wrote the operators CRS names as if they were patterns, after `re.escape` had
 them into other patterns (`Failed to resolve operator: lt\`), and its bad-bot list gave
 every rule the same id ([#80](https://github.com/fabriziosalmi/patterns/issues/80)). It
 now writes `@rx` as CRS wrote it, and the test runs it in a real Apache with ModSecurity:
-none of the 128 ordinary requests is refused, and 13 of the 21 attacks are, in clear
+none of the 162 ordinary requests is refused, and 13 of the 21 attacks are, in clear
 and percent-encoded, because ModSecurity decodes `ARGS` before a rule reads it, which
 `nginx` cannot do.
 
@@ -190,7 +190,7 @@ tested before it has anything real to measure.
 |---|---|
 | **OWASP CRS coverage** | SQLi, XSS, RCE, LFI, RFI, plus generic anomaly and protocol-violation rules. |
 | **Native output** | Nginx `map`/`if`, Apache `SecRule`, Traefik middleware TOML, HAProxy pattern files. |
-| **Bad-bot blocking** | User-Agent lists from public sources. Search engines, link previews and uptime monitors are left out of them, and the nginx, Apache, Traefik and HAProxy tests check it in the real server. HTTP libraries (`curl`, `python-requests`) are refused on purpose. |
+| **Bad-bot blocking** | User-Agent lists from public sources. Search engines, link previews and uptime monitors are left out of them, and the nginx, Apache, Traefik and HAProxy tests check it in the real server. HTTP libraries and tools (`curl`, `python-requests`, OkHttp, ...) are refused on purpose. |
 | **Nightly, tested** | A scheduled GitHub Actions workflow rebuilds every backend, runs the tests on the result, and publishes only if they pass and something changed. |
 | **Pre-built, signed archives** | Skip the toolchain &mdash; download `nginx_waf.zip`, `apache_waf.zip`, `traefik_waf.zip`, or `haproxy_waf.zip` from a dated release that is never replaced, and [verify it](https://fabriziosalmi.github.io/patterns/verify). |
 | **Measured** | What each target does with each rule is generated and published: [coverage](https://fabriziosalmi.github.io/patterns/coverage). |

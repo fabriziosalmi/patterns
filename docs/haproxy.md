@@ -11,7 +11,7 @@ Each rule is written as the regular expression CRS wrote, matched on what its lo
 - **The query string is matched whole**, not parameter by parameter: a pattern written for one value sees the others too. The request body and the cookies are not matched.
 - **`(?i)` is kept as CRS wrote it.** HAProxy compiles the patterns with PCRE2, so there is no `-i` to approximate it with.
 - **No anomaly score.** Every rule decides alone.
-- **A rule that refuses ordinary traffic is not written.** Each is checked against [a corpus of ordinary requests](https://github.com/fabriziosalmi/patterns/blob/main/patterns/corpus.py), with its converters applied, and left out if one matches. [`tests/test_haproxy_blocking.py`](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_haproxy_blocking.py) runs it through a real HAProxy on every change: 128 ordinary requests, none refused; of 21 attacks, 12 refused in clear and 10 percent-encoded.
+- **A rule that refuses ordinary traffic is not written.** Each is checked against [a corpus of ordinary requests](https://github.com/fabriziosalmi/patterns/blob/main/patterns/corpus.py), with its converters applied, and left out if one matches. [`tests/test_haproxy_blocking.py`](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_haproxy_blocking.py) runs it through a real HAProxy on every change: 162 ordinary requests, none refused; of 21 attacks, 12 refused in clear and 10 percent-encoded.
 
 At CRS v4.29.0 that is 166 rules written (6 in full, 160 with a named loss). It is a useful first filter in front of an application, not the Core Rule Set.
 

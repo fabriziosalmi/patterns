@@ -118,7 +118,7 @@ So `badbots.py` leaves out any entry that an ordinary client matches. *Ordinary*
 The nginx, Apache, Traefik and HAProxy tests start the real server with the written list, and send it the bots the list is made of (a scanner, AhrefsBot, SemrushBot, MJ12bot), every client of the corpus a site wants, and the HTTP libraries. The list has to refuse the first, none of the second, and the third.
 :::
 
-**HTTP libraries are refused on purpose.** `curl`, `python-requests` and `Go-http-client` are in the list, and a request that carries one of them as its User-Agent gets a 403, an ordinary one too. The first thing a scraper does is run one of them with its default agent, and that is what the list is for. If you serve an API to scripts, or monitor the site with `curl`, remove the entry, or whitelist the agent as below.
+**HTTP libraries and tools are refused on purpose.** `curl`, `python-requests`, `Go-http-client`, OkHttp, Dart, node-fetch, axios, `Java/`, Wget, HTTPie and Postman are in the list, and a request that carries one of them as its User-Agent gets a 403, an ordinary one too, and that includes a mobile app that has not set a User-Agent of its own. The first thing a scraper does is run one of them with its default agent, and that is what the list is for. If you serve an API to scripts or to your own apps, or monitor the site with `curl`, remove the entry, or whitelist the agent as below, and give your apps a User-Agent of their own.
 
 Because the list now has fewer entries, a bot that only the catch-all caught is let through. The specific names the sources list are still refused.
 

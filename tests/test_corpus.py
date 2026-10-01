@@ -102,9 +102,10 @@ check("none of the unmistakable ones",
        if HOSTILE.search(e["request_uri"] + " " + e["body"] + " " + e["user_agent"])], [])
 
 print("nothing real")
-check("hosts are example.*",
+check("hosts are example.*, localhost, or a documentation address",
       [e["name"] for e in BENIGN
-       if not re.fullmatch(r"(?:[a-z0-9-]+\.)*example\.(?:com|org|net)(?::\d+)?", e["host"])], [])
+       if not re.fullmatch(r"(?:(?:[a-z0-9-]+\.)*example\.(?:com|org|net)|localhost|192\.0\.2\.\d+"
+                           r"|\[2001:db8::[0-9a-f:]+\])(?::\d+)?", e["host"])], [])
 everything = [" ".join(str(e[f]) for f in FIELDS) for e in BENIGN]
 emails = [m for text in everything for m in re.findall(r"[\w.+-]+(?:@|%40)([a-z][\w-]*(?:\.[\w-]+)+)", text)]
 check("people are @example.com", sorted({d for d in emails if not d.startswith("example.")}), [])

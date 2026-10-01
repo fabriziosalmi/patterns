@@ -9,3 +9,11 @@ MJ12bot
 curl
 python-requests
 Go-http-client
+okhttp
+Dart/
+node-fetch
+axios
+^Java/
+PostmanRuntime
+Wget
+HTTPie

@@ -386,10 +386,12 @@ check("and it is the CRS id, 9000000 and more, which no installed CRS has",
 check("every argument is written as CRS wrote it, between the quotes",
       [r["id"] for _, r in apache_records if f'"@rx {r["operator"]["argument"]}"' not in every_file], [])
 check("a rule that refuses is `high`, and the rest record",
-      sorted({(r["severity"], "deny,status:403" in line)
+      sorted({(r["severity"] == "high") == ("deny,status:403" in line)
               for _, r in apache_records for line in every_file.splitlines()
               if f'id:{ID_OFFSET + int(r["id"])},' in line}),
-      [("high", True), ("low", False), ("medium", False)])
+      [True])
+check("and both kinds are written, so the check above says something",
+      sorted({r["severity"] == "high" for _, r in apache_records}), [False, True])
 check("nothing sets the engine: that is the deployment's",
       re.findall(r"^\s*SecRuleEngine", every_file, re.M), [])
 check("no variable is one that is not ModSecurity's",

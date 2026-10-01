@@ -9,8 +9,8 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 
 | Target | Full | Approximate | Unsound | Dropped |
 |---|---:|---:|---:|---:|
-| Nginx | 13 | 159 | 0 | 577 |
-| Apache (ModSecurity) | 9 | 160 | 0 | 580 |
+| Nginx | 11 | 159 | 0 | 579 |
+| Apache (ModSecurity) | 7 | 159 | 0 | 583 |
 | Traefik | 0 | 3 | 0 | 746 |
 | HAProxy | 6 | 160 | 0 | 583 |
 
@@ -22,7 +22,7 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 | matched on a request component the target does not have | 78 | 65 | 561 | 65 |
 | part of a chain, and the target cannot require all of it | 128 | 128 | 128 | 128 |
 | not a rule: it changes another rule | 54 | 54 | 54 | 54 |
-| it refuses ordinary traffic once converted | 8 | 13 |  | 8 |
+| it refuses ordinary traffic once converted | 10 | 16 |  | 8 |
 | longer than the target accepts | 16 |  |  |  |
 | its severity is below what refuses, and the target cannot only record |  |  | 1 | 8 |
 | it records and does not refuse | 1 | 1 |  | 1 |
@@ -31,7 +31,7 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 
 | Loss | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
 |---|---:|---:|---:|---:|
-| matched on other variables than the rule names | 153 | 157 | 3 | 160 |
+| matched on other variables than the rule names | 153 | 156 | 3 | 160 |
 | transformations the rule was written to run after are not applied | 122 | 112 | 2 | 111 |
 <!-- coverage:end -->
 

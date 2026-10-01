@@ -10,4 +10,12 @@
     '(?i)curl',
     '(?i)python-requests',
     '(?i)Go-http-client',
+    '(?i)okhttp',
+    '(?i)Dart/',
+    '(?i)node-fetch',
+    '(?i)axios',
+    '(?i)^Java/',
+    '(?i)PostmanRuntime',
+    '(?i)Wget',
+    '(?i)HTTPie',
   ]
