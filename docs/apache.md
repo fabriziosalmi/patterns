@@ -4,15 +4,16 @@ This guide explains how to deploy the generated rules in Apache HTTPD with the *
 
 ## What it can and cannot do
 
-Each rule is written as `@rx` with the expression CRS wrote, on the variable it matches, and a rule that CRS gives `t:lowercase` is written with it. That is a part of what a CRS rule is, and the rest is not written:
+Each rule is written as CRS wrote it, with the operator it named (`@rx`, `@pm` or `@pmFromFile`), on the variable it matches, and a rule that CRS gives `t:lowercase` is written with it. That is a part of what a CRS rule is, and the rest is not written:
 
-- **Only `@rx` is written**, not negated. `@pm`, `@pmFromFile`, `@detectSQLi`, `@detectXSS`, the numeric comparisons and the byte-range checks are dropped. ModSecurity could run them; this backend does not write them yet.
-- **Only one transformation is applied, `lowercase`.** The others (`urlDecodeUni`, `htmlEntityDecode`, ...) are written as `t:none`, so a pattern that was written to run after one runs on the raw value. The one thing ModSecurity does for you is `ARGS`: its values are already URL-decoded, so an attack percent-encoded in the query string is caught as the same attack in clear.
+- **Only `@rx`, `@pm` and `@pmFromFile` are written**, not negated. `@detectSQLi`, `@detectXSS`, the numeric comparisons and the byte-range checks are dropped. ModSecurity could run them; this backend does not write them yet.
+- **A phrase list is a file, and ModSecurity reads it from next to the rule that names it.** `@pmFromFile restricted-files.data` is how CRS refuses `/.env`, `/.git/config` and a scanner's User-Agent; the `*.data` files are in the archive and **have to stay in the same directory as the `.conf` files**. A phrase list is checked against the corpus as a whole: if one phrase of it is in an ordinary request, the rule is not written.
+- **Only one transformation is applied, `lowercase`.** The others (`urlDecodeUni`, `htmlEntityDecode`, ...) are written as `t:none`, so a pattern that was written to run after one runs on the raw value. The one thing ModSecurity does for you is `ARGS`: its values are already URL-decoded, so an attack percent-encoded in the query string is caught as the same attack in clear. `REQUEST_FILENAME` is not: it holds the path as it arrived (measured: a rule on `%2e` matches `/%2egit/config`), so a path percent-encoded passes a phrase written in clear.
 - **No chain.** A chain matches when every record does. ModSecurity can say so with `chain`; this backend does not write it yet, and a record of a chain on its own is another rule, so no record of one is written (128 of the 749).
 - **No anomaly score.** CRS adds points and refuses over a threshold. Here a rule decides alone: a rule of severity `high` refuses with a 403, and one below it records the match in the log and lets the request through (`pass,log`).
-- **A rule that refuses ordinary traffic is not written.** Without its transformations, some CRS rules mean something else; each is checked against [a corpus of ordinary requests](https://github.com/fabriziosalmi/patterns/blob/main/patterns/corpus.py), as nginx's are, and left out if one matches. The corpus is held to this by [`tests/test_apache_blocking.py`](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_apache_blocking.py), which runs it through a real Apache on every change: 162 ordinary requests, none refused; of 21 attacks, 13 refused in clear and 13 percent-encoded.
+- **A rule that refuses ordinary traffic is not written.** Without its transformations, some CRS rules mean something else; each is checked against [a corpus of ordinary requests](https://github.com/fabriziosalmi/patterns/blob/main/patterns/corpus.py), as nginx's are, and left out if one matches. The corpus is held to this by [`tests/test_apache_blocking.py`](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_apache_blocking.py), which runs it through a real Apache on every change: 162 ordinary requests, none refused; of 21 attacks, 17 refused in clear and 17 percent-encoded.
 
-At CRS v4.29.0 that is 166 rules written (7 in full, 159 with a named loss), and the rest dropped with a reason. It is a useful first filter in front of an application. It is not the Core Rule Set: if you can install that, do.
+At CRS v4.29.0 that is 180 rules written (8 in full, 172 with a named loss), and the rest dropped with a reason. It is a useful first filter in front of an application. It is not the Core Rule Set: if you can install that, do.
 
 ## Prerequisites
 
@@ -57,7 +58,9 @@ The Apache output is split by the part of CRS each rule comes from. A category w
 | `enforcement.conf` | HTTP protocol enforcement |
 | `attack.conf` | HTTP protocol attacks |
 | `fixation.conf` | Session fixation |
+| `detection.conf` | Scanner and bot detection (the User-Agent phrase list) |
 | `bots.conf` | Bad-bot User-Agent rules ([Bad Bot Detection](/badbots)) |
+| `*.data` | The phrase lists the rules name with `@pmFromFile`, one phrase to a line. **Keep them next to the `.conf` files** |
 
 ## Step 1 &mdash; Enable the engine
 

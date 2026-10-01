@@ -10,7 +10,7 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 | Target | Full | Approximate | Unsound | Dropped |
 |---|---:|---:|---:|---:|
 | Nginx | 11 | 159 | 0 | 579 |
-| Apache (ModSecurity) | 7 | 159 | 0 | 583 |
+| Apache (ModSecurity) | 8 | 172 | 0 | 569 |
 | Traefik | 0 | 3 | 0 | 746 |
 | HAProxy | 6 | 160 | 0 | 583 |
 | Envoy | 6 | 164 | 0 | 579 |
@@ -19,8 +19,8 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 
 | Reason | Nginx | Apache (ModSecurity) | Traefik | HAProxy | Envoy |
 |---|---:|---:|---:|---:|---:|
-| an operator the backend cannot express | 292 | 319 | 2 | 319 | 319 |
-| matched on a request component the target does not have | 78 | 65 | 561 | 65 | 65 |
+| an operator the backend cannot express | 292 | 292 | 2 | 319 | 319 |
+| matched on a request component the target does not have | 78 | 78 | 561 | 65 | 65 |
 | part of a chain, and the target cannot require all of it | 128 | 128 | 128 | 128 | 128 |
 | not a rule: it changes another rule | 54 | 54 | 54 | 54 | 54 |
 | it refuses ordinary traffic once converted | 10 | 16 |  | 8 | 4 |
@@ -32,8 +32,8 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 
 | Loss | Nginx | Apache (ModSecurity) | Traefik | HAProxy | Envoy |
 |---|---:|---:|---:|---:|---:|
-| matched on other variables than the rule names | 153 | 156 | 3 | 160 | 164 |
-| transformations the rule was written to run after are not applied | 122 | 112 | 2 | 111 | 115 |
+| matched on other variables than the rule names | 153 | 167 | 3 | 160 | 164 |
+| transformations the rule was written to run after are not applied | 122 | 122 | 2 | 111 | 115 |
 <!-- coverage:end -->
 
 The numbers are counted on the records of the [intermediate representation](/ir), which include the links of a chain and the `SecRuleUpdateTargetById` directives, so they are a little more than the number of CRS rules. [`coverage.json`](https://github.com/fabriziosalmi/patterns/blob/main/waf_patterns/coverage.json) holds the verdict for each record, and is published with every release.

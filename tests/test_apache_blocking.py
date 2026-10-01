@@ -50,7 +50,14 @@ PORT = 18902
 # What the generated output does today. A rule that matches an ordinary request is not
 # written, so none is refused; the floors are below what the rules refuse now, and are
 # there to catch a collapse (see tests/test_nginx_blocking.py).
-EXPECTED: Dict = {"loads": True, "benign": [], "floor_clear": 11, "floor_encoded": 11}
+EXPECTED: Dict = {"loads": True, "benign": [], "floor_clear": 15, "floor_encoded": 15,
+                  # What only a phrase list catches (#52, #92): CRS refuses `/.env` and `/.git/config` with
+                  # `@pmFromFile restricted-files.data` on REQUEST_FILENAME, and a scanner's User-Agent with
+                  # `@pmFromFile scanners-user-agents.data`. ModSecurity reads the file from next to the rules.
+                  # It does not decode the path (measured: `%2e` in REQUEST_FILENAME is seen as `%2e`), so
+                  # `/%2egit/config` passes; ARGS it does decode. A named list is a stronger guard than a
+                  # floor: the floor would pass if some other rule took their place.
+                  "must_catch": ["sensitive file", "git directory", "scanner user agent"]}
 
 FIXTURE = {"loads": True, "benign": [], "floor_clear": 2, "floor_encoded": 0}
 
@@ -160,6 +167,11 @@ def exercise(waf_dir: Path, expected: Dict, check: c.Checker, each: bool) -> Non
         traffic = c.measure(PORT)
     c.report_traffic(check, traffic, expected["benign"], expected["floor_clear"],
                      expected["floor_encoded"])
+    if expected.get("must_catch"):
+        print("\nwhat only a phrase list catches")
+        for label, caught in (("in clear", traffic.caught_clear), ("percent-encoded", traffic.caught_encoded)):
+            check.expect(f"{label}: {', '.join(expected['must_catch'])}",
+                         [n for n in expected["must_catch"] if n not in caught], [])
 
     print("\nthe engine mode is the deployment's")
     check.expect("the rule files say nothing about SecRuleEngine",

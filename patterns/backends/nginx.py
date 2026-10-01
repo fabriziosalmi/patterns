@@ -5,8 +5,8 @@ from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
 
 from patterns.backends import Backend, Capabilities, Compiled, Decision, Target, register
-from patterns.backends._common import operator_of, provenance_header
-from patterns.corpus import VARIABLE_FIELDS, first_ordinary_match, nginx_uri
+from patterns.backends._common import operator_of, phrases_of, provenance_header
+from patterns.corpus import VARIABLE_FIELDS, first_ordinary_match, first_ordinary_phrase, nginx_uri
 from patterns.dialects import python_equivalent
 from patterns.ir import IR
 
@@ -226,6 +226,21 @@ def fires_on_ordinary_traffic(pattern: str, variable: str,
     return first_ordinary_match(pattern, field, ignore_case)
 
 
+def fires_on_ordinary_phrase(phrases: List[str], variable: str) -> Optional[str]:
+    """
+    Returns the name of the first ordinary request a list of phrases matches, or None.
+
+    The same check as `fires_on_ordinary_traffic`, for `@pm` and `@pmFromFile`, which are a
+    case-insensitive substring match and are checked as one whatever the target writes.
+    """
+    if variable == "$uri":
+        return first_ordinary_phrase(phrases, "path", lambda entry: [nginx_uri(entry["path"])])
+    field = VARIABLE_FIELDS.get(variable)
+    if field is None:
+        return None
+    return first_ordinary_phrase(phrases, field)
+
+
 def exclusion_report(not_blocking: int, too_long: int,
                      noisy: List[Tuple[str, str, str]]) -> str:
     """
@@ -283,20 +298,6 @@ def phrase_alternations(phrases: List[str], limit: int = NGINX_MAX_PARAMETER) ->
         size += cost + (1 if chunks[-1] else 0)
         chunks[-1].append(piece)
     return ["(?:" + "|".join(chunk) + ")" for chunk in chunks]
-
-
-def phrases_of(operator: Dict, data_files: Dict[str, List[str]]) -> Optional[List[str]]:
-    """
-    The phrases an `@pm` or `@pmFromFile` operator matches, or None if it is neither.
-
-    `@pm` takes its phrases from its argument, split on blank space. `@pmFromFile` takes
-    them from the file the argument names, which the IR carries (`data_files`).
-    """
-    if operator["negated"] or operator["name"] not in ("pm", "pmFromFile"):
-        return None
-    if operator["name"] == "pm":
-        return operator["argument"].split()
-    return data_files.get(operator["argument"].strip())
 
 
 def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest",
@@ -376,8 +377,10 @@ def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest",
         # Measured, not assumed: a rule that refuses ordinary traffic is not
         # emitted, whatever its severity says. Each key is checked, and a rule is
         # written whole or not at all.
-        ordinary = next((found for found in (fires_on_ordinary_traffic(p, variable, ignore_case)
-                                             for p in patterns) if found is not None), None)
+        if listed is not None:
+            ordinary = fires_on_ordinary_phrase(listed, variable)
+        else:
+            ordinary = fires_on_ordinary_traffic(patterns[0], variable, ignore_case)
         if ordinary is not None:
             excluded_as_noisy.append((rule_id, category, ordinary))
             decisions.append(Decision(index, False, "matches-benign-traffic", ordinary))

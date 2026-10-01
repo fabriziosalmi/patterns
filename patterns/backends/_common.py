@@ -2,6 +2,7 @@
 
 import logging
 import re
+from typing import Dict, List, Optional
 from functools import lru_cache
 
 logger = logging.getLogger(__name__)
@@ -152,6 +153,21 @@ def validate_regex(pattern: str) -> bool:
     except re.error as e:
         logger.warning(f"Invalid regex: {pattern} - {e}")
         return False
+
+
+def phrases_of(operator: dict, data_files: Dict[str, List[str]]) -> Optional[List[str]]:
+    """
+    The phrases an `@pm` or `@pmFromFile` operator matches, or None if it is neither.
+
+    `@pm` takes its phrases from its argument, split on blank space. `@pmFromFile` takes
+    them from the file the argument names, which the IR carries (`data_files`): None when it
+    does not, because a rule written without its phrases would not say what it is for.
+    """
+    if operator["negated"] or operator["name"] not in ("pm", "pmFromFile"):
+        return None
+    if operator["name"] == "pm":
+        return operator["argument"].split()
+    return data_files.get(operator["argument"].strip())
 
 
 def operator_of(rule: dict) -> dict:

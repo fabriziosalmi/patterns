@@ -29,10 +29,13 @@ sudo systemctl restart httpd
 
 1. Copy the generated configuration files to your Apache configuration directory:
    ```bash
-   sudo cp waf_patterns/apache/*.conf /etc/apache2/modsecurity.d/
+   sudo cp waf_patterns/apache/*.conf waf_patterns/apache/*.data /etc/apache2/modsecurity.d/
    # or for CentOS/RHEL:
-   # sudo cp waf_patterns/apache/*.conf /etc/httpd/modsecurity.d/
+   # sudo cp waf_patterns/apache/*.conf waf_patterns/apache/*.data /etc/httpd/modsecurity.d/
    ```
+
+   The `*.data` files are the phrase lists the rules name with `@pmFromFile`: ModSecurity reads them from
+   the directory of the rule file, so they have to be copied next to the `.conf` files.
 
 2. Include the configuration files in your Apache configuration.
    

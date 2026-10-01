@@ -19,7 +19,8 @@ with, and it is written as it was read:
     and the one it can check against the corpus.
   * the variable the rule's location is, one of those the corpus can say is
     ordinary. ARGS holds decoded values, not the raw query string nginx's `$args`
-    is, and is checked as such.
+    is, and is checked as such. REQUEST_FILENAME holds the path as it arrived, not
+    decoded (measured in ModSecurity on Apache), and is checked as such.
   * a rule that refuses, `deny,status:403`, when its severity is `high`, and
     `pass,log` otherwise: ModSecurity can record, so the rules below `high` are
     in the output and in the log, as they are in nginx's maps.
@@ -37,8 +38,14 @@ from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from patterns import dialects
 from patterns.backends import Backend, Capabilities, Compiled, Decision, Target, register
-from patterns.backends._common import ascii_lower, modsecurity_unquote, operator_of, provenance_header
-from patterns.corpus import arguments, first_ordinary_match
+from patterns.backends._common import (
+    ascii_lower,
+    modsecurity_unquote,
+    operator_of,
+    phrases_of,
+    provenance_header,
+)
+from patterns.corpus import arguments, first_ordinary_match, first_ordinary_phrase
 from patterns.ir import IR
 
 logger = logging.getLogger(__name__)
@@ -61,19 +68,13 @@ SEVERITY = {"high": "CRITICAL", "medium": "WARNING", "low": "NOTICE"}
 BLOCKING_ACTIONS = ("block", "deny", "drop")
 
 
-def _path(entry: Dict[str, str]) -> List[str]:
-    """REQUEST_FILENAME: the path, decoded, without the query string."""
-    import urllib.parse
-    return [urllib.parse.unquote(entry["path"])]
-
-
 # Where each location is matched: the variable, and what the corpus has for it. A
 # location is here only if both are: a rule is not written on a variable that nothing
 # says is ordinary.
 LOCATIONS: Dict[str, Tuple[str, str, Optional[Callable]]] = {
     "request-uri": ("REQUEST_URI", "request_uri", None),
     "query-string": ("ARGS", "args", arguments),
-    "request-filename": ("REQUEST_FILENAME", "path", _path),
+    "request-filename": ("REQUEST_FILENAME", "path", None),
     "user-agent": ("REQUEST_HEADERS:User-Agent", "user_agent", None),
     "host": ("REQUEST_HEADERS:Host", "host", None),
     "referer": ("REQUEST_HEADERS:Referer", "referer", None),
@@ -91,16 +92,18 @@ def blocks(rule: Dict) -> bool:
     return "action" not in rule or rule["action"] in BLOCKING_ACTIONS
 
 
-def _write(index: int, rule: Dict) -> Tuple[Decision, Optional[str]]:
+def _write(index: int, rule: Dict,
+           data_files: Dict[str, List[str]]) -> Tuple[Decision, Optional[str], Optional[str]]:
     """
     Decides what to do with one record, and writes the directive if it is written.
 
     Returns:
-        The decision, and the `SecRule` text (None when the rule is not written).
+        The decision, the `SecRule` text (None when the rule is not written) and the name
+        of the phrase file the rule reads, if it reads one.
     """
     directive = rule.get("directive", "SecRule")
     if directive != "SecRule":
-        return Decision(index, False, "not-a-rule", f"{directive} {rule.get('target_rule_id')}"), None
+        return Decision(index, False, "not-a-rule", f"{directive} {rule.get('target_rule_id')}"), None, None
 
     chain = rule.get("chain")
     if chain:
@@ -108,59 +111,81 @@ def _write(index: int, rule: Dict) -> Tuple[Decision, Optional[str]]:
         # rule: the head of 920480 is any `charset=` in a Content-Type, and the link that makes
         # it a rule (the charset is not one that is allowed) is a transaction variable no target
         # has. Written alone it refused `application/json; charset=utf-8`, in all four targets.
-        return Decision(index, False, "chain-unsupported", f"{chain['role']} of {chain['head']}"), None
+        return Decision(index, False, "chain-unsupported", f"{chain['role']} of {chain['head']}"), None, None
 
     operator = operator_of(rule)
-    if operator["negated"] or operator["name"] != "rx":
-        name = ("!" if operator["negated"] else "") + "@" + operator["name"]
-        return Decision(index, False, "operator-unsupported", name), None
-
+    phrases = phrases_of(operator, data_files)
     argument = operator["argument"]
-    expression = modsecurity_unquote(argument)
-    problem = dialects.check(Apache.capabilities.dialect, expression)
-    if problem:
-        return Decision(index, False, "invalid-regex", problem), None
+    if phrases is not None:
+        # `@pm` and `@pmFromFile` are what CRS wrote and what ModSecurity has: a case-insensitive
+        # match against a list, in its own engine and not as a regular expression.
+        if not phrases:
+            return Decision(index, False, "empty-pattern", "the phrase list has no phrases"), None, None
+        expression = None
+    elif operator["negated"] or operator["name"] != "rx":
+        name = ("!" if operator["negated"] else "") + "@" + operator["name"]
+        detail = (f"{name} (the IR has no such phrase list)"
+                  if operator["name"] == "pmFromFile" and not operator["negated"] else name)
+        return Decision(index, False, "operator-unsupported", detail), None, None
+    else:
+        expression = modsecurity_unquote(argument)
+        problem = dialects.check(Apache.capabilities.dialect, expression)
+        if problem:
+            return Decision(index, False, "invalid-regex", problem), None, None
 
     location = rule.get("location", "request-uri").lower()
     if location not in LOCATIONS:
-        return Decision(index, False, "location-unsupported", location), None
+        return Decision(index, False, "location-unsupported", location), None, None
 
     if not blocks(rule):
-        return Decision(index, False, "not-blocking", str(rule.get("action"))), None
+        return Decision(index, False, "not-blocking", str(rule.get("action"))), None, None
 
     rule_id = str(rule.get("id", "no_id"))
     if not rule_id.isdigit():
-        return Decision(index, False, "not-a-rule", "it has no id"), None
+        return Decision(index, False, "not-a-rule", "it has no id"), None, None
 
     variable, field, view = LOCATIONS[location]
     lowered = "lowercase" in (rule.get("transformations") or [])
     values = view or (lambda entry: [entry[field]])
-    seen = (lambda entry: [ascii_lower(v) for v in values(entry)]) if lowered else values
-    ordinary = first_ordinary_match(expression, field, False, seen)
+    if phrases is not None:
+        ordinary = first_ordinary_phrase(phrases, field, values)
+    else:
+        seen = (lambda entry: [ascii_lower(v) for v in values(entry)]) if lowered else values
+        ordinary = first_ordinary_match(expression, field, False, seen)
     if ordinary is not None:
-        return Decision(index, False, "matches-benign-traffic", ordinary), None
+        return Decision(index, False, "matches-benign-traffic", ordinary), None, None
 
     severity = rule.get("severity", "medium")
     transformations = "t:none" + (",t:lowercase" if lowered else "")
     category = rule.get("category", "generic").upper()
-    text = (f'SecRule {variable} "@rx {argument}" '
+    text = (f'SecRule {variable} "@{operator["name"]} {argument}" '
             f'"id:{ID_OFFSET + int(rule_id)},phase:{rule.get("phase") or 2},{transformations},'
             f'{BLOCK if severity == "high" else RECORD},'
             f"msg:'{category}, CRS {rule_id}',"
             f"severity:'{rule.get('crs_severity') or SEVERITY.get(severity, 'WARNING')}'\"\n")
-    return Decision(index, True, location=location, pattern=argument), text
+    data = argument.strip() if operator["name"] == "pmFromFile" else None
+    return (Decision(index, True, location=location, pattern=argument if expression is not None else None),
+            text, data)
 
 
-def generate_apache_waf(rules: List[Dict], crs_ref: str = "latest") -> Compiled:
-    """Builds the ModSecurity configuration, one file for each category of CRS."""
+def generate_apache_waf(rules: List[Dict], crs_ref: str = "latest",
+                        data_files: Optional[Dict[str, List[str]]] = None) -> Compiled:
+    """
+    Builds the ModSecurity configuration, one file for each category of CRS, and the phrase
+    files the rules read.
+    """
+    data_files = data_files or {}
     decisions: List[Decision] = []
+    read: Dict[str, None] = {}
     # Rules by category, in the order of the IR, which is the order of CRS.
     categorized: Dict[str, List[str]] = defaultdict(list)
     for index, rule in enumerate(rules):
-        decision, text = _write(index, rule)
+        decision, text, data = _write(index, rule, data_files)
         decisions.append(decision)
         if text is not None:
             categorized[rule.get("category", "generic").lower()].append(text)
+        if data is not None:
+            read[data] = None
 
     files: Dict[str, str] = {}
     for category, written in categorized.items():
@@ -171,6 +196,17 @@ def generate_apache_waf(rules: List[Dict], crs_ref: str = "latest") -> Compiled:
             *written,
         ])
         logger.info(f"Generated {category}.conf ({len(written)} rules)")
+
+    # The phrase files the rules read, as CRS ships them: one phrase to a line. ModSecurity looks
+    # for a relative name next to the file that names it, so they go next to the rules, and
+    # `Include .../*.conf` does not read them as configuration.
+    for name in sorted(read):
+        files[name] = "".join([
+            provenance_header(crs_ref, Apache.title),
+            "# A phrase list read by `@pmFromFile`: one phrase to a line, matched with case ignored.\n\n",
+            *[phrase + "\n" for phrase in data_files[name]],
+        ])
+        logger.info(f"Generated {name} ({len(data_files[name])} phrases)")
     return Compiled(files, decisions)
 
 
@@ -184,7 +220,7 @@ class Apache(Backend):
     # this backend writes `@rx` and `t:lowercase` and nothing else yet.
     capabilities = Capabilities(
         dialect="pcre",
-        operators=frozenset({"rx"}),
+        operators=frozenset({"rx", "pm", "pmFromFile"}),
         transformations=frozenset({"lowercase"}),
         case_insensitive=True,
         locations={
@@ -193,7 +229,9 @@ class Apache(Backend):
                 "ARGS", "the parsed argument values: their names and the raw query string "
                         "are other variables",
                 frozenset({"ARGS_NAMES", "QUERY_STRING"})),
-            "request-filename": Target("REQUEST_FILENAME"),
+            "request-filename": Target(
+                "REQUEST_FILENAME", "the path as it arrived, without the query string: not percent-decoded "
+                                    "(measured in ModSecurity on Apache: `%2e` in a path is seen as `%2e`)"),
             "user-agent": Target("REQUEST_HEADERS:User-Agent"),
             "host": Target("REQUEST_HEADERS:Host"),
             "referer": Target("REQUEST_HEADERS:Referer"),
@@ -202,4 +240,4 @@ class Apache(Backend):
     )
 
     def compile(self, ir: IR) -> Compiled:
-        return generate_apache_waf(ir.rules, ir.crs_ref)
+        return generate_apache_waf(ir.rules, ir.crs_ref, ir.data_files)

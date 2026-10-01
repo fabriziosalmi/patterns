@@ -400,9 +400,10 @@ check("a rule on the method is written on $request_method, and checked against i
 print("what the Apache backend writes")
 ID_OFFSET = 9_000_000
 apache_records = [(d, R.rules[d.index]) for d in compiled["apache"].decisions if d.emitted]
-every_file = "".join(compiled["apache"].files.values())
-check("apache writes only @rx, not negated",
-      sorted({(r["operator"]["name"], r["operator"]["negated"]) for _, r in apache_records}), [("rx", False)])
+every_file = "".join(text for name, text in compiled["apache"].files.items() if name.endswith(".conf"))
+check("apache writes only @rx, @pm and @pmFromFile, not negated",
+      sorted({(r["operator"]["name"], r["operator"]["negated"]) for _, r in apache_records}),
+      [("pm", False), ("pmFromFile", False), ("rx", False)])
 check("and nothing that is not a rule",
       sorted({r["directive"] for _, r in apache_records}), ["SecRule"])
 check("every rule has an id of its own, ModSecurity refuses a file with two the same (#80)",
@@ -410,8 +411,9 @@ check("every rule has an id of its own, ModSecurity refuses a file with two the 
 check("and it is the CRS id, 9000000 and more, which no installed CRS has",
       sorted(int(i) - ID_OFFSET for i in re.findall(r"[ ,\"]id:(\d+)", every_file)),
       sorted(int(r["id"]) for _, r in apache_records))
-check("every argument is written as CRS wrote it, between the quotes",
-      [r["id"] for _, r in apache_records if f'"@rx {r["operator"]["argument"]}"' not in every_file], [])
+check("every argument is written as CRS wrote it, between the quotes, under the operator CRS named",
+      [r["id"] for _, r in apache_records
+       if f'"@{r["operator"]["name"]} {r["operator"]["argument"]}"' not in every_file], [])
 check("a rule that refuses is `high`, and the rest record",
       sorted({(r["severity"] == "high") == ("deny,status:403" in line)
               for _, r in apache_records for line in every_file.splitlines()
@@ -484,6 +486,58 @@ check("quoting and reading a quoted argument are inverses",
       [v for v in (r"a\b", 'say "hi"', r"\d+\.\d", r'\"', "", "\\\\\"") if modsecurity_unquote(modsecurity_quote(v)) != v], [])
 check("and what is written for a backslash is two, as Apache reads two as one",
       modsecurity_quote("a\\b"), "a\\\\b")
+
+print("what the Apache backend writes for a list of phrases")
+
+
+def apache_phrases(argument, name="pmFromFile", data=None, negated=False, **extra):
+    """What the Apache backend does with one phrase rule made for the purpose, and the files it writes."""
+    record = rule(operator={"name": name, "negated": negated, "argument": argument}, **extra)
+    one = backends.get("apache").compile(ir.IR(rules=[record], data_files=data or {}))
+    d = one.decisions[0]
+    return (d.emitted, d.reason, d.detail), one.files
+
+
+WORDS = {"words.data": ["zqxjk-one", "zq.two", "ZQ three"]}
+inline, files_ = apache_phrases("zqxjk-one zq.two", "pm")
+check("apache: @pm is written as CRS wrote it, with its phrases, and needs no file",
+      (inline[0], '"@pm zqxjk-one zq.two"' in files_["test.conf"], sorted(files_)), (True, True, ["test.conf"]))
+listed, files_ = apache_phrases("words.data", data=WORDS)
+check("@pmFromFile is written as it was, and names a file that is shipped next to the rules",
+      (listed[0], '"@pmFromFile words.data"' in files_["test.conf"], sorted(files_)), (True, True, ["test.conf", "words.data"]))
+check("the file is a phrase to a line after a comment, which ModSecurity skips, in the order CRS has them",
+      [l for l in files_["words.data"].splitlines() if l and not l.startswith("#")], WORDS["words.data"])
+check("a phrase list the IR does not have is not guessed at",
+      apache_phrases("gone.data", data=WORDS)[0], (False, "operator-unsupported", "@pmFromFile (the IR has no such phrase list)"))
+check("an empty one is not written", apache_phrases("e.data", data={"e.data": []})[0][:2], (False, "empty-pattern"))
+check("a negated one is not: it is not what a rule that refuses can say",
+      apache_phrases("zqxjk", "pm", negated=True)[0][:2], (False, "operator-unsupported"))
+check("one an ordinary request holds is not written, whatever the case: `Googlebot` in a User-Agent",
+      apache_phrases("GOOGLEBOT zqxjk", "pm", location="User-Agent")[0][:2], (False, "matches-benign-traffic"))
+late = [f"zq-filler-{i:04d}" for i in range(400)] + ["googlebot"]
+check("and a phrase that is last in a long list keeps the whole rule out: it is written whole or not at all",
+      apache_phrases("big.data", data={"big.data": late}, location="User-Agent")[0][:2], (False, "matches-benign-traffic"))
+check("a phrase is looked for in ARGS as ModSecurity holds it, decoded: `gr%C3%BC%C3%9Fe` is `grüße`",
+      apache_phrases("grüße zqxjk", "pm", location="Query-String")[0][:2], (False, "matches-benign-traffic"))
+check("and in the path as ModSecurity holds it, raw (measured): `%20` is seen as `%20`, not as a space",
+      apache_phrases("w.data", data={"w.data": ["my%20report"]}, location="Request-Filename")[0][:2],
+      (False, "matches-benign-traffic"))
+check("so a phrase only the decoded path would hold, `my report`, is written: it is not what ModSecurity sees",
+      apache_phrases("w.data", data={"w.data": ["my report"]}, location="Request-Filename")[0][:2], (True, None))
+check("only the phrase files of rules that are written are shipped",
+      sorted(backends.get("apache").compile(ir.IR(rules=[
+          rule("1", operator={"name": "pmFromFile", "negated": False, "argument": "words.data"}),
+          rule("2", action="pass", operator={"name": "pmFromFile", "negated": False, "argument": "other.data"})],
+          data_files={"words.data": ["zqxjk"], "other.data": ["zqxjl"]})).files), ["test.conf", "words.data"])
+named = re.findall(r'@pmFromFile (\S+)"', every_file)
+shipped = sorted(n for n in compiled["apache"].files if n.endswith(".data"))
+check("every phrase file a written rule names is shipped, and every one shipped is named",
+      (sorted(set(named) - set(shipped)), sorted(set(shipped) - set(named))), ([], []))
+check("and holds the phrases CRS has in it, nothing more and nothing less",
+      [n for n in shipped
+       if [l for l in compiled["apache"].files[n].splitlines() if l and not l.startswith("#")] != R.data_files[n]], [])
+check("no phrase file is read as configuration: the include is of *.conf",
+      [n for n in compiled["apache"].files if not (n.endswith(".conf") or n.endswith(".data") or n == "README.md")], [])
 
 print("what the Envoy backend writes")
 import yaml  # noqa: E402
@@ -672,7 +726,7 @@ check("what each backend declares it can express is what is shown above and noth
            sorted(c.capabilities.transformations), c.capabilities.case_insensitive)
        for n, c in ((n, backends.get(n)) for n in backends.names())},
       {"nginx": ("pcre", ["pm", "pmFromFile", "rx"], ["lowercase"], True),
-       "apache": ("pcre", ["rx"], ["lowercase"], True),
+       "apache": ("pcre", ["pm", "pmFromFile", "rx"], ["lowercase"], True),
        "traefik": ("re2", ["rx"], [], True),
        "haproxy": ("pcre", ["rx"], ["lowercase"], True),
        "envoy": ("re2", ["rx"], ["lowercase"], True)})

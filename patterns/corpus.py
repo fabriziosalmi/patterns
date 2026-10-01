@@ -609,6 +609,35 @@ def first_ordinary_match(pattern: str, field: str, ignore_case: bool = False,
     return None
 
 
+def first_ordinary_phrase(phrases: Iterable[str], field: str,
+                          view: Optional[Callable[[Dict[str, str]], Iterable[str]]] = None) -> Optional[str]:
+    """
+    The name of the first ordinary request whose `field` holds one of the phrases.
+
+    This is what `@pm` and `@pmFromFile` do: a case-insensitive substring match against a
+    list. Every target that writes a phrase list is checked by it, however it writes the list
+    (an alternation, a file of phrases, a native matcher), so that what is excluded does not
+    depend on what Python makes of a regular expression of six hundred alternatives.
+
+    Args:
+        phrases: The phrases of the list.
+        field: A key of an entry: `args`, `user_agent`, ...
+        view: What the target matches the phrases against, for a target that does not see the
+            field as it was sent. By default, the field itself.
+
+    Returns:
+        The `name` of the first request that holds a phrase, None if none does.
+    """
+    needles = [p.lower() for p in phrases if p]
+    for entry in BENIGN:
+        values = view(entry) if view else [entry[field]]
+        for value in values:
+            lowered = value.lower()
+            if any(needle in lowered for needle in needles):
+                return entry["name"]
+    return None
+
+
 def wanted_user_agents() -> Dict[str, str]:
     """
     The User-Agent of every ordinary client a bad-bot list must not refuse.

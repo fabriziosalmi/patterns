@@ -114,7 +114,7 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 | Target | Full | Approximate | Unsound | Dropped |
 |---|---:|---:|---:|---:|
 | Nginx | 11 | 159 | 0 | 579 |
-| Apache (ModSecurity) | 7 | 159 | 0 | 583 |
+| Apache (ModSecurity) | 8 | 172 | 0 | 569 |
 | Traefik | 0 | 3 | 0 | 746 |
 | HAProxy | 6 | 160 | 0 | 583 |
 | Envoy | 6 | 164 | 0 | 579 |
@@ -123,8 +123,8 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 
 | Reason | Nginx | Apache (ModSecurity) | Traefik | HAProxy | Envoy |
 |---|---:|---:|---:|---:|---:|
-| an operator the backend cannot express | 292 | 319 | 2 | 319 | 319 |
-| matched on a request component the target does not have | 78 | 65 | 561 | 65 | 65 |
+| an operator the backend cannot express | 292 | 292 | 2 | 319 | 319 |
+| matched on a request component the target does not have | 78 | 78 | 561 | 65 | 65 |
 | part of a chain, and the target cannot require all of it | 128 | 128 | 128 | 128 | 128 |
 | not a rule: it changes another rule | 54 | 54 | 54 | 54 | 54 |
 | it refuses ordinary traffic once converted | 10 | 16 |  | 8 | 4 |
@@ -136,8 +136,8 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 
 | Loss | Nginx | Apache (ModSecurity) | Traefik | HAProxy | Envoy |
 |---|---:|---:|---:|---:|---:|
-| matched on other variables than the rule names | 153 | 156 | 3 | 160 | 164 |
-| transformations the rule was written to run after are not applied | 122 | 112 | 2 | 111 | 115 |
+| matched on other variables than the rule names | 153 | 167 | 3 | 160 | 164 |
+| transformations the rule was written to run after are not applied | 122 | 122 | 2 | 111 | 115 |
 <!-- coverage:end -->
 
 The nginx figures above are measured on the rules in its row here. The table is
@@ -169,9 +169,10 @@ it wrote the operators CRS names as if they were patterns, after `re.escape` had
 them into other patterns (`Failed to resolve operator: lt\`), and its bad-bot list gave
 every rule the same id ([#80](https://github.com/fabriziosalmi/patterns/issues/80)). It
 now writes `@rx` as CRS wrote it, and the test runs it in a real Apache with ModSecurity:
-none of the 162 ordinary requests is refused, and 13 of the 21 attacks are, in clear
+none of the 162 ordinary requests is refused, and 17 of the 21 attacks are, in clear
 and percent-encoded, because ModSecurity decodes `ARGS` before a rule reads it, which
-`nginx` cannot do.
+`nginx` cannot do. Its phrase lists (`@pmFromFile`, which CRS uses for `/.env`, `/.git/config` and
+scanners) are written as the `*.data` files ModSecurity reads from next to the rules.
 
 Traefik needs a plugin, which Traefik's output was not written for until
 [#69](https://github.com/fabriziosalmi/patterns/issues/69): it is now written for
