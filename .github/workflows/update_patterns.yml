@@ -121,6 +121,7 @@ jobs:
       run: |
         { python3 tests/test_coverage.py \
           && python3 tests/test_corpus.py \
+          && python3 tests/test_badbots.py \
           && python3 tests/test_release.py \
           && python3 tests/test_diff.py \
           && python3 tests/test_cli.py; } 2>&1 | tee -a gate.log
@@ -259,7 +260,7 @@ jobs:
         # Bot pattern counts per backend
         NGINX_BOTS=$(grep -c '^\s*"~' waf_patterns/nginx/bots.conf || echo 0)
         APACHE_BOTS=$(grep -c '^SecRule REQUEST_HEADERS' waf_patterns/apache/bots.conf || echo 0)
-        TRAEFIK_BOTS=$(grep -cE '^\s*"' waf_patterns/traefik/bots.toml || echo 0)
+        TRAEFIK_BOTS=$(grep -cE "^\s+['\"]" waf_patterns/traefik/bots.toml || echo 0)
         HAPROXY_BOTS=$(grep -c '^acl' waf_patterns/haproxy/bots.acl || echo 0)
 
         # Archive sizes (human-readable)

@@ -46,13 +46,13 @@ matches one regex against one raw request component, and that is all it can do.
 
 So the converted rule set is measured against ordinary traffic and against
 attacks, with `nginx` itself, by [`tests/test_nginx_blocking.py`](tests/test_nginx_blocking.py).
-Against the rules in this repository (the nginx row of the table below), 109
-ordinary requests in ten categories of what a false positive looks like, and 21
+Against the rules in this repository (the nginx row of the table below), 122
+ordinary requests in twelve categories of what a false positive looks like, and 21
 attacks ([`patterns/corpus.py`](patterns/corpus.py)):
 
 | | |
 |---|---|
-| Ordinary requests refused | **0 of 109** |
+| Ordinary requests refused | **0 of 122** |
 | Attacks refused, sent in clear | **14 of 21** |
 | Attacks refused, percent-encoded | **3 of 21** |
 
@@ -152,7 +152,8 @@ Traefik needs a plugin, which Traefik's output was not written for until
 [`traefik-plugin-blockuseragent`](https://github.com/agence-gaya/traefik-plugin-blockuseragent),
 and the test runs that plugin, unmodified. The plugin sees only the User-Agent, so
 the CRS rules that can be written for Traefik are three; its bad-bot list does the
-rest, and it refuses search engines today ([#78](https://github.com/fabriziosalmi/patterns/issues/78)).
+rest, and it is checked not to refuse search engines, link previews or monitors
+([#78](https://github.com/fabriziosalmi/patterns/issues/78)).
 
 Each test records what the target does as the known state and fails the day it
 changes, so this section and the tests are kept together. Each also runs first
@@ -165,7 +166,7 @@ tested before it has anything real to measure.
 |---|---|
 | **OWASP CRS coverage** | SQLi, XSS, RCE, LFI, RFI, plus generic anomaly and protocol-violation rules. |
 | **Native output** | Nginx `map`/`if`, Apache `SecRule`, Traefik middleware TOML, HAProxy ACL files. |
-| **Bad-bot blocking** | Curated User-Agent lists from public sources, with safe defaults that do **not** block major search engines. |
+| **Bad-bot blocking** | User-Agent lists from public sources. Search engines, link previews and uptime monitors are left out of them, and the nginx, Traefik and HAProxy tests check it in the real server (Apache's `bots.conf` does not load yet: [#80](https://github.com/fabriziosalmi/patterns/issues/80)). HTTP libraries (`curl`, `python-requests`) are refused on purpose. |
 | **Nightly, tested** | A scheduled GitHub Actions workflow rebuilds every backend, runs the tests on the result, and publishes only if they pass and something changed. |
 | **Pre-built, signed archives** | Skip the toolchain &mdash; download `nginx_waf.zip`, `apache_waf.zip`, `traefik_waf.zip`, or `haproxy_waf.zip` from a dated release that is never replaced, and [verify it](https://fabriziosalmi.github.io/patterns/verify). |
 | **Measured** | What each target does with each rule is generated and published: [coverage](https://fabriziosalmi.github.io/patterns/coverage). |
@@ -317,7 +318,7 @@ map $http_user_agent $bad_bot {
 if ($bad_bot) { return 403; }
 ```
 
-The default list blocks SEO crawlers, AI training bots, and known scanners while explicitly **allowing** major search engines (Google, Bing, DuckDuckGo, Yandex, Baidu).
+The default list blocks SEO crawlers, AI training bots, and known scanners, and does not refuse major search engines (Google, Bing, DuckDuckGo, Yandex, Baidu), link previews or uptime monitors: [Bad Bot Detection](https://fabriziosalmi.github.io/patterns/badbots) says how that is kept true.
 
 ## Automation
 

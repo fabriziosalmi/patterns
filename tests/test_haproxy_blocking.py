@@ -81,6 +81,36 @@ def alerts(output: str) -> List[str]:
             for l in output.splitlines() if l.startswith("[ALERT]")]
 
 
+def bad_bots(waf_dir: Path, check: c.Checker) -> None:
+    """
+    The bad-bot list, `bots.acl`, as a fragment of a frontend: it is a list of `acl` lines,
+    so it is the one way it loads. It is held to what the other targets' lists are
+    (tests/conformance.py `report_bots`).
+    """
+    source = waf_dir / "bots.acl"
+    if not source.is_file():
+        check.note("no bots.acl in this directory")
+        return
+    lines = [l for l in source.read_text().splitlines() if l.strip() and not l.startswith("#")]
+    with tempfile.TemporaryDirectory() as tmp:
+        workdir = Path(tmp)
+        workdir.chmod(0o755)
+        body = "".join(f"    {line}\n" for line in lines)
+        (workdir / "bots.cfg").write_text(f"{HEAD}frontend f\n    bind *:8080\n{body}{ANSWER}")
+        volumes = {workdir: "/cfg"}
+        print("\nthe bad-bot list (bots.acl)")
+        checked = c.run_once(IMAGE, ["haproxy", "-c", "-f", "/cfg/bots.cfg"], volumes)
+        if not check.expect("haproxy loads it", checked.returncode == 0, True):
+            for line in alerts(checked.stdout + checked.stderr)[:3]:
+                check.note(line[:160])
+            return
+        with c.Container(["haproxy", "-f", "/cfg/bots.cfg"], {PORT: 8080}, volumes) as server:
+            if not server.wait(PORT):
+                check.fail("haproxy loaded the file and did not answer")
+                return
+            c.report_bots(check, lambda agent: c.send(PORT, c.user_agent_request(agent, "/")) == 403)
+
+
 def exercise(waf_dir: Path, modes: Dict[str, Dict], check: c.Checker) -> None:
     """Loads the files in each mode and, where they load, sends the corpus."""
     for mode, expected in modes.items():
@@ -130,6 +160,7 @@ def main() -> int:
 
     check = c.Checker("the harness, on a configuration known to load")
     exercise(REPO_ROOT / "tests" / "fixtures" / "haproxy", {"fragment": FIXTURE}, check)
+    bad_bots(REPO_ROOT / "tests" / "fixtures" / "haproxy", check)
     if check.failures:
         print("\nthe harness fails on a configuration that is known to be good; "
               "the result for the generated files would mean nothing")
@@ -137,6 +168,7 @@ def main() -> int:
 
     check = c.Checker(f"the generated files ({target})")
     exercise(target, EXPECTED, check)
+    bad_bots(target, check)
     return c.finish(check)
 
 

@@ -51,7 +51,7 @@ PORT = 18903
 PLUGIN = "blockuseragent"
 PLUGIN_MODULE = "github.com/agence-gaya/traefik-plugin-blockuseragent"
 PLUGIN_VERSION = "v0.1.8"
-SCANNER = "sqlmap/1.8#stable"
+SCANNER = c.BAD_BOTS[0]
 
 # What the generated output does today.
 EXPECTED: Dict = {
@@ -60,22 +60,14 @@ EXPECTED: Dict = {
     "benign": [],
     "floor_clear": 0,
     "floor_encoded": 0,
-    # The bad-bot list: it must refuse a scanner, and must not refuse a browser or a search engine.
-    "bots_refuse_scanner": True,
     # A command substitution in the User-Agent, which the first expression of
     # middleware.toml matches: the written rules refuse, and the plugin reads `regex`.
     "probe_user_agent": "$(id)",
-    # Today's list refuses these, and two of them are search engines it is documented
-    # not to refuse (#78). curl, python-requests and Go-http-client are in it on
-    # purpose; the monitor and the link unfurler are a side effect of one catch-all.
-    "bots_refused_ordinary": ["a link unfurler", "a search engine", "an uptime monitor", "bingbot",
-                              "curl", "go http client", "python requests"],
-    "bots_issue": "#78",
 }
 
 # Known to load: refuses nothing ordinary, and refuses the scanner.
 FIXTURE = {"loads": True, "benign": [], "floor_clear": 1, "floor_encoded": 1,
-           "probe_user_agent": SCANNER, "bots_refuse_scanner": False, "bots_refused_ordinary": []}
+           "probe_user_agent": SCANNER}
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -120,9 +112,7 @@ def errors(logs: str) -> List[str]:
     return [re.sub(r"^\S+\s+ERR\s+", "", l) for l in lines if " ERR " in l]
 
 
-def user_agent_request(user_agent: str, path: str) -> Dict[str, str]:
-    return {"host": "example.com", "user_agent": user_agent, "referer": "", "content_type": "",
-            "request_uri": path, "method": "GET", "body": ""}
+user_agent_request = c.user_agent_request
 
 
 def exercise(traefik_dir: Path, expected: Dict, check: c.Checker) -> None:
@@ -166,15 +156,8 @@ def exercise(traefik_dir: Path, expected: Dict, check: c.Checker) -> None:
             probed = c.send(PORT, user_agent_request(probe, "/")) == 403
 
             print("\nthe bad-bot list")
-            refuses_scanner = c.send(PORT, user_agent_request(SCANNER, "/__bots__")) == 403
-            refused = sorted(e["name"] for e in BENIGN
-                             if e["category"] == "clients"
-                             and c.send(PORT, user_agent_request(e["user_agent"], "/__bots__")) == 403)
             if bots:
-                check.expect("refuses a scanner", refuses_scanner, expected["bots_refuse_scanner"])
-                known = expected.get("bots_issue")
-                check.expect("ordinary clients it refuses" + (f", as known ({known})" if known else ""),
-                             refused, sorted(expected["bots_refused_ordinary"]))
+                c.report_bots(check, lambda agent: c.send(PORT, user_agent_request(agent, "/__bots__")) == 403)
             else:
                 check.note("no bots.toml in this directory")
     print("\nthe rules")

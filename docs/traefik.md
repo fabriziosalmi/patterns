@@ -8,8 +8,8 @@ Traefik has no built-in middleware that matches a header against a regular expre
 The plugin sees the `User-Agent` header and nothing else: not the path, the query string, the cookies or the body. Of the CRS rules, only the few that are aimed at that header and that refuse (three at the time of writing) can be written for it, so `middleware.toml` is short. The part that does most of the work is the bad-bot list, `bots.toml`. For the rest of what CRS covers, see [Coverage](/coverage), and use a WAF that reads requests (Coraza, ModSecurity) in front of or behind Traefik.
 :::
 
-::: warning The bad-bot list refuses search engines today
-`bots.toml` contains a catch-all entry that matches any User-Agent with `bot`, `crawl` or `spider` in it, which includes Googlebot and Bingbot ([#78](https://github.com/fabriziosalmi/patterns/issues/78)). Until that is fixed, do not put it in front of a site that wants to be indexed.
+::: tip What the bad-bot list refuses
+`bots.toml` refuses bots and scanners, and HTTP libraries on purpose: a request from `curl` or `python-requests` gets a 403. It does not refuse search engines, link previews or uptime monitors: the entries that would are left out, and the test sends all of them to Traefik with this plugin. [Bad Bot Detection](/badbots) has the list of what is left out and why.
 :::
 
 ## Quick start

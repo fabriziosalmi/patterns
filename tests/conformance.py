@@ -38,7 +38,7 @@ from typing import Callable, Dict, List, Optional
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from patterns.corpus import ATTACKS, BENIGN  # noqa: E402
+from patterns.corpus import ATTACKS, BENIGN, wanted_user_agents  # noqa: E402
 
 
 def in_clear(entry: Dict[str, str]) -> Dict[str, str]:
@@ -102,6 +102,41 @@ def measure(port: int) -> Traffic:
     traffic.caught_encoded = [e["name"] for e in ATTACKS if send(port, e) == 403]
     traffic.caught_clear = [e["name"] for e in ATTACKS if send(port, in_clear(e)) == 403]
     return traffic
+
+
+# Agents a bad-bot list is meant to refuse. They are in the public lists it is written
+# from, and no ordinary client sends them. If one of these is ever let through, the list
+# has been emptied rather than narrowed.
+BAD_BOTS = ("sqlmap/1.8#stable", "AhrefsBot/7.0", "SemrushBot/7", "MJ12bot/v1.4.8")
+
+
+def user_agent_request(user_agent: str, path: str) -> Dict[str, str]:
+    """A request that is nothing but a User-Agent, for a list that reads only that."""
+    return {"host": "example.com", "user_agent": user_agent, "referer": "", "content_type": "",
+            "request_uri": path, "method": "GET", "body": ""}
+
+
+def report_bots(check: "Checker", refuses: Callable[[str], bool]) -> None:
+    """
+    Asserts what a bad-bot list does to a running server, which is three things.
+
+    It refuses a scanner and the bots it is made of: a list that refuses nothing is
+    not narrowed, it is gone. It refuses no client a site wants: a browser, a search
+    engine, a link preview, a monitor (#78). And it refuses the HTTP libraries, which is
+    what the list is for and is said so in docs/badbots.md, so that a library that
+    stops being refused is as much a change as a search engine that starts.
+
+    Args:
+        check: Where to record failures.
+        refuses: Sends a User-Agent to the server and says whether it was refused.
+    """
+    let_through = [a for a in BAD_BOTS if not refuses(a)]
+    check.expect("lets through no bot it is made of", let_through, [])
+    wanted = wanted_user_agents()
+    check.expect("refuses no client a site wants", sorted(n for n, a in wanted.items() if refuses(a)), [])
+    libraries = sorted(e["name"] for e in BENIGN if e["category"] == "libraries")
+    refused = sorted(e["name"] for e in BENIGN if e["category"] == "libraries" and refuses(e["user_agent"]))
+    check.expect("refuses HTTP libraries, on purpose", refused, libraries)
 
 
 def docker() -> Optional[str]:

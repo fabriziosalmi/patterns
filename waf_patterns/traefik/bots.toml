@@ -1,4 +1,14 @@
-# Not written: Yandex(?!Search) uses lookaround, which re2 does not have
+# Left out, an ordinary client would be refused: Apache-HttpClient (matches linkedinbot)
+# Left out, an ordinary client would be refused: Disco (matches discord link preview)
+# Left out, an ordinary client would be refused: Pingdom (matches pingdom)
+# Left out, an ordinary client would be refused: StatusCake (matches statuscake)
+# Left out, an ordinary client would be refused: WhatsApp (matches whatsapp link preview)
+# Left out, an ordinary client would be refused: Yandex(?!Search) (matches yandexbot)
+# Left out, an ordinary client would be refused: [a-z0-9\-_]*(bot|crawl|headless|archiver|transcoder|spider|uptime|validator|fetcher|cron|checker|reader|extractor|monitoring|analyzer|scraper) (matches googlebot)
+# Left out, an ordinary client would be refused: acebookexternalhit\/ (matches facebook link preview)
+# Left out, an ordinary client would be refused: baidu\.com (matches baiduspider)
+# Left out, an ordinary client would be refused: facebookexternalhit (matches facebook link preview)
+# Left out, an ordinary client would be refused: oBot (matches slack link preview)
 [http.middlewares]
 [http.middlewares.bad_bot_block]
   [http.middlewares.bad_bot_block.plugin.blockuseragent]
@@ -65,7 +75,6 @@
       '(?i)Apache Droid',
       '(?i)Apache OpenOffice',
       '(?i)Apache-HttpAsyncClient',
-      '(?i)Apache-HttpClient',
       '(?i)ApacheBench',
       '(?i)Apexoo',
       '(?i)AportWorm\/',
@@ -260,7 +269,6 @@
       '(?i)Digincore',
       '(?i)DigitalPebble',
       '(?i)Dirbuster',
-      '(?i)Disco',
       '(?i)Discobot',
       '(?i)Discourse Forum Onebox',
       '(?i)Discoverybot',
@@ -857,7 +865,6 @@
       '(?i)PingAdmin\.Ru',
       '(?i)PingSpot',
       '(?i)Pingability',
-      '(?i)Pingdom',
       '(?i)Pingoscope',
       '(?i)Pixray',
       '(?i)Pizilla',
@@ -1095,7 +1102,6 @@
       '(?i)StackRambler',
       '(?i)Statastico\/',
       '(?i)Statically-',
-      '(?i)StatusCake',
       '(?i)Steeler',
       '(?i)Stratagems Kumo',
       '(?i)Stripe\/',
@@ -1304,7 +1310,6 @@
       '(?i)Whacker',
       '(?i)WhatCMS',
       '(?i)WhatWeb',
-      '(?i)WhatsApp',
       '(?i)WhatsMyIP',
       '(?i)Whatweb',
       '(?i)WhereGoes\?',
@@ -1372,7 +1377,6 @@
       '(?i)ZoteroTranslationServer',
       '(?i)ZumBot',
       '(?i)ZyBorg',
-      '(?i)[a-z0-9\-_]*(bot|crawl|headless|archiver|transcoder|spider|uptime|validator|fetcher|cron|checker|reader|extractor|monitoring|analyzer|scraper)',
       '(?i)^Aether',
       '(?i)^Amazon Simple Notification Service Agent$',
       '(?i)^Amazon-Route53-Health-Check-Service',
@@ -1428,7 +1432,6 @@
       '(?i)a3logics\.in',
       '(?i)a\.pr-cy\.ru',
       '(?i)aboutthedomain',
-      '(?i)acebookexternalhit\/',
       '(?i)acme\.sectigo\.com',
       '(?i)acoon',
       '(?i)acrylicapps\.com\/pulp',
@@ -1468,7 +1471,6 @@
       '(?i)awin\.com',
       '(?i)axios\/',
       '(?i)backlink-check',
-      '(?i)baidu\.com',
       '(?i)basicstate',
       '(?i)baypup\/',
       '(?i)biNu image cacher',
@@ -1539,7 +1541,6 @@
       '(?i)exif',
       '(?i)ezooms',
       '(?i)facebookcatalog',
-      '(?i)facebookexternalhit',
       '(?i)facebookexternalua',
       '(?i)facebookplatform',
       '(?i)facebookscraper',
@@ -1713,7 +1714,6 @@
       '(?i)nuhk',
       '(?i)nutch',
       '(?i)nyawc\/',
-      '(?i)oBot',
       '(?i)odin\.com',
       '(?i)oegp',
       '(?i)okhttp',

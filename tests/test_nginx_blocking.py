@@ -37,6 +37,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -48,6 +49,7 @@ import conformance  # noqa: E402
 from conformance import in_clear  # noqa: E402
 
 PORT = 18998
+BOTS_PORT = 18999
 
 # A blocking subset converted without CRS's transformations catches an attack
 # written in clear and misses the same attack percent-encoded, because the
@@ -58,11 +60,28 @@ MINIMUM_CAUGHT_IN_CLEAR = 12
 MINIMUM_CAUGHT_ENCODED = 2
 
 
-def wrap(maps_file: Path, rules_file: Path, workdir: Path) -> str:
-    """The configuration the documentation tells people to build."""
+def wrap(maps_file: Path, rules_file: Path, workdir: Path, bots_file: Optional[Path] = None) -> str:
+    """
+    The configuration the documentation tells people to build.
+
+    The bad-bot list, if there is one, is a server of its own on the next port, so that
+    what it refuses is the list and not the rules: a scanner's agent is refused by both.
+    """
     root = workdir / "www"
     root.mkdir(exist_ok=True)
     (root / "index.html").write_text("ok\n")
+    bots = ""
+    if bots_file:
+        bots = f"""
+  include {bots_file};
+
+  server {{
+    listen {BOTS_PORT};
+    root {root};
+    if ($bad_bot) {{ return 403; }}
+    location / {{ index index.html; }}
+  }}
+"""
     return f"""pid {workdir}/nginx.pid;
 error_log {workdir}/error.log;
 events {{ worker_connections 64; }}
@@ -75,7 +94,7 @@ http {{
   scgi_temp_path {workdir}/scgi;
 
   include {maps_file};
-
+{bots}
   server {{
     listen {PORT};
     root {root};
@@ -98,6 +117,7 @@ def main() -> int:
 
     target = Path(sys.argv[1]) if len(sys.argv) > 1 else REPO_ROOT / "waf_patterns" / "nginx"
     maps_file, rules_file = target / "waf_maps.conf", target / "waf_rules.conf"
+    bots_file = target / "bots.conf" if (target / "bots.conf").is_file() else None
     for path in (maps_file, rules_file):
         if not path.is_file():
             print(f"FAIL  missing {path}")
@@ -106,7 +126,8 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         workdir = Path(tmp)
         conf = workdir / "nginx.conf"
-        conf.write_text(wrap(maps_file.resolve(), rules_file.resolve(), workdir))
+        conf.write_text(wrap(maps_file.resolve(), rules_file.resolve(), workdir,
+                              bots_file.resolve() if bots_file else None))
         started = subprocess.run(["nginx", "-c", str(conf), "-p", str(workdir)],
                                  capture_output=True, text=True)
         if started.returncode != 0:
@@ -118,11 +139,17 @@ def main() -> int:
             refused_benign = [e["name"] for e in BENIGN if send(e) == 403]
             caught_encoded = [e["name"] for e in ATTACKS if send(e) == 403]
             caught_clear = [e["name"] for e in ATTACKS if send(in_clear(e)) == 403]
+            bots = conformance.Checker("the bad-bot list (bots.conf)")
+            if bots_file:
+                conformance.report_bots(bots, lambda agent: conformance.send(
+                    BOTS_PORT, conformance.user_agent_request(agent, "/")) == 403)
+            else:
+                bots.note("no bots.conf in this directory")
         finally:
             subprocess.run(["nginx", "-s", "stop", "-c", str(conf), "-p", str(workdir)],
                            capture_output=True)
 
-    failures = 0
+    failures = bots.failures
 
     print(f"\nordinary traffic ({len(BENIGN)} requests)")
     if refused_benign:

@@ -112,7 +112,8 @@ check("people are @example.com", sorted({d for d in emails if not d.startswith("
 # domains, the .invalid and .test top levels, or a documentation address. The
 # crawlers' own pages are the exception, because they are what the crawler sends.
 EXEMPT = ("google.com", "bing.com", "slack.com", "facebook.com", "ycombinator.com", "gmail",
-          "github", "jwt.io", "example.")
+          "github", "jwt.io", "example.", "duckduckgo.com", "baidu.com", "yandex.com", "apple.com",
+          "discordapp.com", "linkedin.com", "pingdom.com", "uptimerobot.com")
 urls = [u for text in everything for u in re.findall(r"https?(?:://|%3A%2F%2F)([\w.-]+)", text)]
 check("urls point at example domains, or at a crawler's own page",
       sorted({u for u in urls if not any(x in u for x in EXEMPT)}), [])

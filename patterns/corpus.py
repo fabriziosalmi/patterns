@@ -102,7 +102,9 @@ CATEGORIES: Dict[str, str] = {
     "auth": "OAuth and OpenID Connect, JWTs, magic links, redirects that carry a URL.",
     "graphql": "GraphQL queries, over GET and POST.",
     "files": "File names and paths: dots, versions, percent-encoding, path parameters.",
-    "clients": "Who is asking: real browsers, crawlers, libraries, monitors, hosts.",
+    "clients": "Who is asking: real browsers, internal services, hosts.",
+    "bots": "Automated clients a site wants: search engines, link previews, uptime monitors.",
+    "libraries": "HTTP libraries sending their default User-Agent: a bad-bot list refuses these on purpose.",
     "tracking": "Referers and tracking parameters, which are long and full of `&` and `=`.",
     "international": "Text that is not Latin or not English, percent-encoded.",
 }
@@ -296,26 +298,71 @@ BENIGN: List[Dict[str, str]] = [
            "/cart;jsessionid=0A1B2C3D4E5F", "x=1"),
 
     # --- clients --------------------------------------------------------------
-    benign("clients", "curl", "a command line client", "/api/v1/me", user_agent="curl/8.7.1", referer=""),
-    benign("clients", "a search engine", "a crawler: its agent names a url, and says it is a bot",
-           "/", user_agent="Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
-           referer=""),
-    benign("clients", "an uptime monitor", "a monitor with `Bot` in its name",
-           "/healthz", user_agent="Better Uptime Bot", referer=""),
-    benign("clients", "bingbot", "a crawler with a url in its agent",
-           "/", user_agent="Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)",
-           referer=""),
     benign("clients", "firefox on linux", "a browser: `Gecko`, a date and a version in its agent",
            "/", user_agent=_FIREFOX),
     benign("clients", "safari on an iphone", "a mobile browser", "/", user_agent=_SAFARI_IOS),
     benign("clients", "edge on windows", "a browser with two engines in its name", "/", user_agent=_EDGE),
     benign("clients", "chrome on android", "a mobile browser", "/", user_agent=_CHROME_ANDROID),
-    benign("clients", "a link unfurler", "a bot that fetches a page a person pasted",
+
+    # --- bots -----------------------------------------------------------------
+    # A bad-bot list refuses automation. It must not refuse these: a search engine
+    # that cannot crawl, a link that shows no preview and a monitor that reports the
+    # site down are what its owner pays for (#78). Real agents, from each operator's
+    # own documentation, with the url they publish.
+    benign("bots", "googlebot", "a crawler: its agent names a url, and says it is a bot",
+           "/", user_agent="Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+           referer=""),
+    benign("bots", "bingbot", "a crawler with a url in its agent",
+           "/", user_agent="Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)",
+           referer=""),
+    benign("bots", "duckduckbot", "a crawler whose name ends in `bot`",
+           "/", user_agent="DuckDuckBot/1.1; (+http://duckduckgo.com/duckduckbot.html)", referer=""),
+    benign("bots", "baiduspider", "a crawler that names `spider` and its own domain",
+           "/", user_agent="Mozilla/5.0 (compatible; Baiduspider/2.0; +http://www.baidu.com/search/spider.html)",
+           referer=""),
+    benign("bots", "yandexbot", "a crawler whose name ends in `bot`",
+           "/", user_agent="Mozilla/5.0 (compatible; YandexBot/3.0; +http://yandex.com/bots)", referer=""),
+    benign("bots", "applebot", "a crawler inside a Safari agent",
+           "/", user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_5) AppleWebKit/605.1.15 "
+                           "(KHTML, like Gecko) Version/13.1.1 Safari/605.1.15 "
+                           "(Applebot/0.1; +http://www.apple.com/go/applebot)", referer=""),
+    benign("bots", "slack link preview", "a bot that fetches a page a person pasted",
            "/article", user_agent="Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)", referer=""),
-    benign("clients", "python requests", "a library, scripted", "/api/v1/me",
+    benign("bots", "facebook link preview", "a bot that fetches a page a person shared",
+           "/article", user_agent="facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+           referer=""),
+    benign("bots", "twitterbot", "a bot that fetches a page a person posted",
+           "/article", user_agent="Twitterbot/1.0", referer=""),
+    benign("bots", "linkedinbot", "a link preview that names a library too",
+           "/article", user_agent="LinkedInBot/1.0 (compatible; Mozilla/5.0; Apache-HttpClient +http://www.linkedin.com)",
+           referer=""),
+    benign("bots", "discord link preview", "a link preview whose agent begins `Disco`",
+           "/article", user_agent="Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)",
+           referer=""),
+    benign("bots", "whatsapp link preview", "a link preview from a messenger",
+           "/article", user_agent="WhatsApp/2.23.20", referer=""),
+    benign("bots", "telegram link preview", "a link preview from a messenger",
+           "/article", user_agent="TelegramBot (like TwitterBot)", referer=""),
+    benign("bots", "better uptime", "a monitor with `Bot` in its name",
+           "/healthz", user_agent="Better Uptime Bot", referer=""),
+    benign("bots", "uptimerobot", "a monitor with `uptime` and `robot` in its name",
+           "/healthz", user_agent="Mozilla/5.0 (compatible; UptimeRobot/2.0; http://www.uptimerobot.com/)",
+           referer=""),
+    benign("bots", "pingdom", "a monitor that names its own service",
+           "/healthz", user_agent="Pingdom.com_bot_version_1.4_(http://www.pingdom.com/)", referer=""),
+    benign("bots", "statuscake", "a monitor that names its own service",
+           "/healthz", user_agent="Mozilla/5.0 (compatible; StatusCake_Pagespeed_indev)", referer=""),
+
+    # --- libraries ------------------------------------------------------------
+    # Ordinary for an API and for a script, and what a bad-bot list exists to refuse:
+    # the first thing a scraper does is run one with its default agent. So the lists
+    # refuse these on purpose, and docs/badbots.md says how to allow them.
+    benign("libraries", "curl", "a command line client", "/api/v1/me", user_agent="curl/8.7.1", referer=""),
+    benign("libraries", "python requests", "a library, scripted", "/api/v1/me",
            user_agent="python-requests/2.32.3", referer=""),
-    benign("clients", "go http client", "a library, scripted", "/api/v1/me",
+    benign("libraries", "go http client", "a library, scripted", "/api/v1/me",
            user_agent="Go-http-client/2.0", referer=""),
+
     benign("clients", "a metrics scraper", "an internal client", "/metrics",
            user_agent="Prometheus/2.53.0", referer=""),
     benign("clients", "a json api call from a service", "a JSON content type and a service agent",
@@ -412,3 +459,24 @@ def first_ordinary_match(pattern: str, field: str, ignore_case: bool = False) ->
         if expression.search(entry[field]):
             return entry["name"]
     return None
+
+
+def wanted_user_agents() -> Dict[str, str]:
+    """
+    The User-Agent of every ordinary client a bad-bot list must not refuse.
+
+    Every entry of BENIGN but the `libraries`: a browser, a search engine, a link
+    preview, a monitor, an internal service. A library that sends its default agent
+    is ordinary too, and is the one kind of client a bad-bot list refuses on purpose.
+
+    Returns:
+        The name of the entry, and its User-Agent, for each distinct agent.
+    """
+    found: Dict[str, str] = {}
+    seen = set()
+    for entry in BENIGN:
+        agent = entry["user_agent"]
+        if entry["category"] != "libraries" and agent and agent not in seen:
+            seen.add(agent)
+            found[entry["name"]] = agent
+    return found
