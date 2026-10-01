@@ -1,7 +1,9 @@
-displayName: badbot (stand-in)
+displayName: Block User-Agent
+summary: Blocks HTTP requests with a User-Agent matching the configured regex.
 type: middleware
-import: github.com/fabriziosalmi/badbot
-summary: Refuses a request whose User-Agent matches one of the configured expressions.
+import: github.com/agence-gaya/traefik-plugin-blockuseragent
+compatibility: TODO
 testData:
-  userAgent:
-    - "sqlmap"
+  Regex:
+    - "\buseragent1\b|\buseragent2\b|\buseragent3\b|\buseragent4\b"
+    - "\buseragent5\b|\buseragent6\b|\buseragent7\b|\buseragent8\b"

@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Tuple
 
 from patterns.backends import Backend, Capabilities, Compiled, Decision, Target, register
 from patterns.backends._common import provenance_header
-from patterns.corpus import BENIGN, VARIABLE_FIELDS
+from patterns.corpus import VARIABLE_FIELDS, first_ordinary_match
 from patterns.dialects import python_equivalent
 from patterns.ir import IR
 
@@ -213,15 +213,7 @@ def fires_on_ordinary_traffic(pattern: str, variable: str,
     field = VARIABLE_FIELDS.get(variable)
     if field is None:
         return None
-    try:
-        expression = re.compile(python_equivalent(pattern),
-                                re.IGNORECASE if ignore_case else 0)
-    except re.error:
-        return None
-    for entry in BENIGN:
-        if expression.search(entry[field]):
-            return entry["name"]
-    return None
+    return first_ordinary_match(pattern, field, ignore_case)
 
 
 def exclusion_report(not_blocking: int, too_long: int,

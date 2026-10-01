@@ -50,6 +50,7 @@ jobs:
     - uses: actions/setup-python@v7
       with:
         python-version: "3.11"
-    # A real Traefik, with a stand-in for the plugin the output is written for.
+    # A real Traefik, running the plugin the output is written for (vendored under
+    # tests/fixtures/traefik/plugin, unmodified).
     - name: Load the Traefik middleware in Traefik
       run: python3 tests/test_traefik_blocking.py

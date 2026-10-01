@@ -213,8 +213,8 @@ check("haproxy: ACLs and comparisons in waf.acl",
       len(re.findall(r"^acl ", acl, re.M))
       + len(re.findall(r"^http-request (?:deny|log|tarpit) if \{", acl, re.M)),
       written("haproxy"))
-check("traefik: patterns in middleware.toml",
-      len(re.findall(r'^      "', compiled["traefik"].files["middleware.toml"], re.M)),
+check("traefik: expressions in middleware.toml",
+      len(re.findall(r"^      ['\"]", compiled["traefik"].files["middleware.toml"], re.M)),
       written("traefik"))
 
 print("what a backend declares is what it writes")
@@ -237,9 +237,57 @@ check("haproxy declares case-insensitive: every ACL is written with -i",
       " -i " in built("haproxy", lowered)["waf.acl"], True)
 insensitive = rule(operator={"name": "rx", "negated": False, "argument": "(?i)zqxjk"},
                    pattern="@rx (?i)zqxjk", location="User-Agent")
-check("traefik declares it is not: (?i) is removed and nothing replaces it",
-      '"zqxjk"' in built("traefik", insensitive)["middleware.toml"]
-      and "(?i)" not in built("traefik", insensitive)["middleware.toml"], True)
+check("traefik declares it is: (?i) is kept, which Go honours",
+      "'(?i)zqxjk'" in built("traefik", insensitive)["middleware.toml"], True)
+# What the backend writes is a decision at each step, and each step is shown to refuse:
+# a User-Agent plugin writes only what refuses and only what is a regular expression its
+# engine compiles, and nothing an ordinary request matches.
+check("traefik writes only rules that refuse: severity high",
+      sorted({R.rules[d.index]["severity"] for d in compiled["traefik"].decisions if d.emitted}), ["high"])
+check("and only @rx, not negated",
+      sorted({(R.rules[d.index]["operator"]["name"], R.rules[d.index]["operator"]["negated"])
+              for d in compiled["traefik"].decisions if d.emitted}), [("rx", False)])
+UA = {"location": "User-Agent"}
+
+
+def traefik_decision(argument, **extra):
+    """What the Traefik backend does with one rule made for the purpose."""
+    record = rule(operator={"name": "rx", "negated": False, "argument": argument},
+                  pattern="@rx " + argument, **UA, **extra)
+    [d] = backends.get("traefik").compile(ir.IR(rules=[record])).decisions
+    return (d.emitted, d.reason)
+
+
+check("a rule below `high` is not written, because a plugin that refuses cannot only record",
+      traefik_decision("zqxjk", severity="medium"), (False, "severity-below-blocking"))
+check("an expression Go's RE2 does not have is not written: it would stop the middleware",
+      traefik_decision("zq(?!xjk)"), (False, "invalid-regex"))
+check("one an ordinary client matches is not written",
+      traefik_decision("Googlebot"), (False, "matches-benign-traffic"))
+check("one that is fine is", traefik_decision("zqxjk"), (True, None))
+check("a negated operator is not written as the expression it negates",
+      backends.get("traefik").compile(ir.IR(rules=[rule(
+          operator={"name": "rx", "negated": True, "argument": "zqxjk"}, pattern="!@rx zqxjk", **UA)])
+      ).decisions[0].reason, "operator-unsupported")
+try:
+    import tomllib
+except ImportError:  # before 3.11
+    tomllib = None
+if tomllib:
+    awkward = [r"^\$", r"a\.b", "it's", r'say "hi"', r"(?i)\bfoo\b", "back\\slash'quote"]
+    for expression in awkward:
+        text = built("traefik", rule(operator={"name": "rx", "negated": False, "argument": expression},
+                                     pattern="@rx " + expression, location="User-Agent"))["middleware.toml"]
+        try:
+            read = tomllib.loads(text)["http"]["middlewares"]["waf_test_user_agent"]["plugin"]["blockuseragent"]["regex"]
+        except Exception as e:  # noqa: BLE001
+            read = f"not TOML: {e}"
+        check(f"traefik: {expression!r} is read back as written", read, [expression])
+    check("and so is the whole committed file",
+          bool(tomllib.loads((REPO_ROOT / "waf_patterns" / "traefik" / "middleware.toml").read_text())), True)
+    check("and the bad-bot list, which badbots.py writes",
+          len(tomllib.loads((REPO_ROOT / "waf_patterns" / "traefik" / "bots.toml").read_text())
+              ["http"]["middlewares"]["bad_bot_block"]["plugin"]["blockuseragent"]["regex"]) > 1000, True)
 check("what each backend declares it can express is what is shown above and nothing more: "
       "a claim added here has to be shown in the output first",
       {n: (c.capabilities.dialect, sorted(c.capabilities.operators),
@@ -247,7 +295,7 @@ check("what each backend declares it can express is what is shown above and noth
        for n, c in ((n, backends.get(n)) for n in backends.names())},
       {"nginx": ("pcre", ["rx"], ["lowercase"], True),
        "apache": ("pcre", ["rx"], [], True),
-       "traefik": ("re2", ["rx"], [], False),
+       "traefik": ("re2", ["rx"], [], True),
        "haproxy": ("pcre", ["contains", "endsWith", "rx", "streq"], ["lowercase"], True)})
 check("every location a backend wrote a regular expression on is one it declares",
       {n: sorted({d.location for d in compiled[n].decisions if d.emitted and d.pattern}

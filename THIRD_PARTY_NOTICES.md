@@ -107,6 +107,21 @@ redistribution, a copy is included in the [`LICENSES/`](LICENSES/) directory.
 
 ---
 
+## traefik-plugin-blockuseragent (agence-gaya)
+
+- **Upstream:** https://github.com/agence-gaya/traefik-plugin-blockuseragent
+  (v0.1.8, commit `86ba4f3ce573e91c0dff375ebd059cf31b6ebb85`).
+- **Provides:** the Traefik middleware plugin the `traefik_waf.zip` output is
+  written for. It is **not** part of the generated artifacts. An unmodified copy is
+  vendored in `tests/fixtures/traefik/plugin/` so that the tests run it, with its
+  licence and a note of where it came from; the documentation tells users to
+  install it from Traefik's plugin catalog.
+- **SPDX license:** `Apache-2.0` (the upstream `LICENSE`, kept next to the copy).
+- **Attribution:** Copyright the plugin's authors (agence-gaya). The copy is
+  unmodified, so there is no change to state.
+
+---
+
 ## Summary
 
 | Upstream source | Provides | SPDX | License copy |
@@ -115,6 +130,7 @@ redistribution, a copy is included in the [`LICENSES/`](LICENSES/) directory.
 | JayBizzle/Crawler-Detect | bad-bot User-Agent list | `MIT` | notice above |
 | mitchellkrogza/nginx-ultimate-bad-bot-blocker | bad-bot User-Agent list | `MIT` | notice above |
 | matomo-org/referrer-spam-blacklist | referrer-spam domain list | Public Domain | — |
+| agence-gaya/traefik-plugin-blockuseragent | test fixture only (not redistributed in the archives) | `Apache-2.0` | `tests/fixtures/traefik/plugin/LICENSE` |
 
 If you redistribute the generated artifacts (for example the release archives
 `nginx_waf.zip`, `apache_waf.zip`, `traefik_waf.zip`, `haproxy_waf.zip`, or the

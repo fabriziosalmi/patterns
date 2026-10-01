@@ -46,6 +46,7 @@ REASONS = {
     "invalid-regex": "the expression does not compile",
     "empty-pattern": "nothing is left of the pattern",
     "not-blocking": "it records and does not refuse",
+    "severity-below-blocking": "its severity is below what refuses, and the target cannot only record",
     "matches-benign-traffic": "it refuses ordinary traffic once converted",
     "parameter-too-long": "longer than the target accepts",
 }

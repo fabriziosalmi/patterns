@@ -85,6 +85,12 @@ jobs:
     - name: Test the diff between releases
       run: python3 tests/test_diff.py
 
+    # The bad-bot lists are written by badbots.py, not by a backend: what it writes
+    # for Traefik is TOML, for the plugin that exists, and without the entries its
+    # engine cannot compile.
+    - name: Test the bad-bot lists
+      run: python3 tests/test_badbots.py
+
     - name: Fail if the committed output is stale
       run: python3 -m patterns build --all --check
 

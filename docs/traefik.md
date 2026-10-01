@@ -1,33 +1,63 @@
 # Traefik Integration
 
-This guide explains how to consume the generated WAF middleware in **Traefik v2 / v3**.
+This guide explains how to consume the generated middleware in **Traefik v2 / v3**.
 
-::: warning The generated Traefik middleware does not load today
-Traefik 3.7 refuses `middleware.toml` before it reaches a middleware: the expressions are written into TOML basic strings, where `\$` is not an escape, and `bots.toml` has the same problem ([#69](https://github.com/fabriziosalmi/patterns/issues/69)). The output also needs a plugin named `badbot` that takes a `userAgent` list, and I could not identify which one it is meant for; `tests/test_traefik_blocking.py` runs a real Traefik with a stand-in. What follows is the intended use.
+Traefik has no built-in middleware that matches a header against a regular expression, so the output needs a plugin. It is written for [`agence-gaya/traefik-plugin-blockuseragent`](https://github.com/agence-gaya/traefik-plugin-blockuseragent) (Apache-2.0, in Traefik's plugin catalog): a list of regular expressions, matched against the `User-Agent` header, and a `403` when one matches.
+
+::: warning What this can and cannot do
+The plugin sees the `User-Agent` header and nothing else: not the path, the query string, the cookies or the body. Of the CRS rules, only the few that are aimed at that header and that refuse (three at the time of writing) can be written for it, so `middleware.toml` is short. The part that does most of the work is the bad-bot list, `bots.toml`. For the rest of what CRS covers, see [Coverage](/coverage), and use a WAF that reads requests (Coraza, ModSecurity) in front of or behind Traefik.
+:::
+
+::: warning The bad-bot list refuses search engines today
+`bots.toml` contains a catch-all entry that matches any User-Agent with `bot`, `crawl` or `spider` in it, which includes Googlebot and Bingbot ([#78](https://github.com/fabriziosalmi/patterns/issues/78)). Until that is fixed, do not put it in front of a site that wants to be indexed.
 :::
 
 ## Quick start
 
-1. Download `traefik_waf.zip` from the [latest release](https://github.com/fabriziosalmi/patterns/releases/latest).
-2. Drop the TOML files into your dynamic configuration directory.
-3. Reference the middleware from each router that should be protected.
+1. Download `traefik_waf.zip` from the [latest release](https://github.com/fabriziosalmi/patterns/releases/latest) (or from a [pinned one](/verify)).
+2. Register the plugin in the **static** configuration.
+3. Drop the TOML files into your dynamic configuration directory.
+4. Reference the middlewares from each router that should be protected.
 
 ## Files in the archive
 
 | File | Purpose |
 |------|---------|
-| `middleware.toml` | WAF middleware definition (regex patterns per category) |
-| `bots.toml` | Bad-bot User-Agent middleware |
+| `middleware.toml` | The CRS rules that can be written for a User-Agent plugin: one middleware per category, e.g. `waf_rce_user_agent` |
+| `bots.toml` | The bad-bot list: one middleware, `bad_bot_block` |
 
-## Step 1 &mdash; Enable the file provider
+## Step 1 &mdash; Register the plugin
+
+Plugins are declared in the static configuration, under the name the generated files use, `blockuseragent`:
 
 ::: code-group
 
 ```toml [traefik.toml]
-[providers]
-  [providers.file]
-    directory = "/etc/traefik/dynamic"
-    watch = true
+[experimental.plugins.blockuseragent]
+  moduleName = "github.com/agence-gaya/traefik-plugin-blockuseragent"
+  version = "v0.1.8"
+```
+
+```yaml [traefik.yml]
+experimental:
+  plugins:
+    blockuseragent:
+      moduleName: github.com/agence-gaya/traefik-plugin-blockuseragent
+      version: v0.1.8
+```
+
+:::
+
+Traefik downloads the plugin when it starts, so it needs to reach the plugin catalog. `v0.1.8` is the version the generated output is tested with.
+
+## Step 2 &mdash; Enable the file provider
+
+::: code-group
+
+```toml [traefik.toml]
+[providers.file]
+  directory = "/etc/traefik/dynamic"
+  watch = true
 ```
 
 ```yaml [traefik.yml]
@@ -39,43 +69,55 @@ providers:
 
 :::
 
-## Step 2 &mdash; Drop the TOML files in
+## Step 3 &mdash; Drop the TOML files in
 
 ```bash
 sudo cp waf_patterns/traefik/*.toml /etc/traefik/dynamic/
 ```
 
-Traefik picks them up automatically because `watch = true`.
+## Step 4 &mdash; Reference the middlewares
 
-## Step 3 &mdash; Reference the middleware
+The names are the keys defined inside the files. List them:
+
+```bash
+grep -ho '^\[http\.middlewares\.[A-Za-z0-9_]*\]' /etc/traefik/dynamic/*.toml
+```
+
+The names of the rules' middlewares follow the categories CRS has rules for, so they can change when the rules are refreshed. Bundle them in a `chain` of your own and reference that:
 
 ::: code-group
 
 ```toml [dynamic/routes.toml]
+[http.middlewares.waf.chain]
+  middlewares = ["waf_rce_user_agent", "bad_bot_block"]
+
 [http.routers.app]
   rule = "Host(`example.com`)"
   service = "app"
-  middlewares = ["waf-protection", "bot-blocker"]
+  middlewares = ["waf"]
 ```
 
 ```yaml [dynamic/routes.yml]
 http:
+  middlewares:
+    waf:
+      chain:
+        middlewares:
+          - waf_rce_user_agent
+          - bad_bot_block
   routers:
     app:
       rule: "Host(`example.com`)"
       service: app
       middlewares:
-        - waf-protection
-        - bot-blocker
+        - waf
 ```
 
 :::
 
-The middleware names (`waf-protection`, `bot-blocker`) are the keys defined inside `middleware.toml` and `bots.toml`.
-
 ## Docker labels
 
-For Docker / Compose deployments, attach the middleware via labels:
+For Docker / Compose deployments, attach the middlewares through the file provider's names, with the `@file` suffix:
 
 ```yaml
 services:
@@ -84,58 +126,51 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.app.rule=Host(`example.com`)"
-      - "traefik.http.routers.app.middlewares=waf-protection@file,bot-blocker@file"
-```
-
-The `@file` suffix tells Traefik to resolve the middleware from the file provider.
-
-## Plugin compatibility
-
-`middleware.toml` is written as `[http.middlewares.NAME.plugin.badbot]` with a `userAgent` list of regular expressions, so it needs a plugin registered under the name `badbot` in the static configuration. It is not generated against Traefik's built-in middlewares, which have no User-Agent matching. If you prefer a dedicated WAF plugin (e.g. one of the community plugins on [Traefik Plugins](https://plugins.traefik.io/)), you can declare it side-by-side and chain both:
-
-```yaml
-experimental:
-  plugins:
-    waf:
-      moduleName: "github.com/example/traefik-waf-plugin"
-      version: "v1.0.0"
+      - "traefik.http.routers.app.middlewares=waf_rce_user_agent@file,bad_bot_block@file"
 ```
 
 ## Customization
 
-### Add custom patterns
+### Add your own patterns
 
-Add an expression to the `userAgent` list of a middleware in `middleware.toml`. Write it as a TOML *literal* string (`'...'`) so that backslashes mean what they say:
+Add an expression to the `regex` list of a middleware. They are Go regular expressions ([RE2](https://github.com/google/re2/wiki/Syntax): no lookahead, lookbehind or backreferences), matched anywhere in the header, case-sensitive unless they start with `(?i)`. Write them as TOML *literal* strings (`'...'`), so that backslashes mean what they say:
 
 ```toml
-[http.middlewares.waf_custom_user_agent.plugin.badbot]
-  userAgent = [
-    'your-custom-pattern',
+[http.middlewares.my_blocklist.plugin.blockuseragent]
+  regex = [
+    '(?i)MyCustomBot',
   ]
+```
+
+### Allow a client
+
+The plugin has a second list, `regexAllow`, checked first: a User-Agent that matches it is let through whatever `regex` says.
+
+```toml
+[http.middlewares.bad_bot_block.plugin.blockuseragent]
+  regexAllow = ['(?i)Googlebot']
 ```
 
 ### Logging
 
-Enable structured access logs to track middleware decisions:
+The plugin logs each refusal (the expression's index, the User-Agent, the address, the host and the URI) to Traefik's log. To see what the middlewares do per request, enable the access log:
 
 ```toml
 [accessLog]
   filePath = "/var/log/traefik/access.log"
   format = "json"
-  [accessLog.fields]
-    [accessLog.fields.headers]
-      defaultMode = "keep"
 ```
 
 ## Testing
 
 ```bash
-curl -H "Host: example.com" "http://localhost/?id=1' OR '1'='1"
-docker logs traefik 2>&1 | grep -i blocked
+curl -s -o /dev/null -w "%{http_code}\n" -A "Mozilla/5.0" http://localhost/            # 200
+curl -s -o /dev/null -w "%{http_code}\n" -A "sqlmap/1.8"  http://localhost/            # 403, if bad_bot_block is on the route
 ```
 
 ## Troubleshooting
 
-- **Middleware never loads** &mdash; check that the file provider directory matches and that `watch = true`. `traefik logs -f` shows hot-reload events.
-- **Router does not apply the middleware** &mdash; the middleware name must match exactly (case-sensitive) between router declaration and middleware definition.
-- **Latency** &mdash; regex middleware adds per-request overhead. Profile with `traefik` access logs and consider scoping the middleware to specific routers rather than applying globally.
+- **Everything returns `404`, or the routers are missing** &mdash; the file provider rejected a file. Traefik logs the reason at start (`ERR Error while building configuration`).
+- **`error compiling regex ...`** &mdash; an expression uses something RE2 does not have, and the whole middleware does not start. The generated files only contain expressions RE2 compiles; this is for the ones you added.
+- **The plugin is not found** &mdash; it is declared under `experimental.plugins` in the *static* configuration, with the name `blockuseragent`, and Traefik can reach the plugin catalog.
+- **A legitimate client is refused** &mdash; check which expression matched in Traefik's log, then add the client to `regexAllow`. If an ordinary request is refused by a rule from `middleware.toml`, [report it](https://github.com/fabriziosalmi/patterns/blob/main/CONTRIBUTING.md#reporting-or-fixing-a-false-positive).

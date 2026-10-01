@@ -101,7 +101,7 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 |---|---:|---:|---:|---:|
 | Nginx | 12 | 156 | 0 | 581 |
 | Apache (ModSecurity) | 0 | 1 | 712 | 36 |
-| Traefik | 0 | 1 | 6 | 742 |
+| Traefik | 0 | 3 | 0 | 746 |
 | HAProxy | 2 | 97 | 403 | 247 |
 
 **Why a record is dropped**, by the first reason the backend found:
@@ -109,11 +109,12 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 | Reason | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
 |---|---:|---:|---:|---:|
 | matched on a request component the target does not have | 96 |  | 685 | 160 |
-| an operator the backend cannot express | 398 | 21 | 3 | 31 |
+| an operator the backend cannot express | 398 | 21 | 2 | 31 |
 | not a rule: it changes another rule | 54 |  | 54 | 54 |
 | the expression does not compile |  | 15 |  | 2 |
 | longer than the target accepts | 16 |  |  |  |
 | it refuses ordinary traffic once converted | 13 |  |  |  |
+| its severity is below what refuses, and the target cannot only record |  |  | 5 |  |
 | it records and does not refuse | 4 |  |  |  |
 
 **What a written rule loses**, in how many of them:
@@ -121,12 +122,11 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 | Loss | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
 |---|---:|---:|---:|---:|
 | matched on other variables than the rule names | 149 | 633 | 3 | 480 |
-| an operator written as something it is not |  | 373 | 2 | 301 |
+| an operator written as something it is not |  | 373 |  | 301 |
 | transformations the rule was written to run after are not applied | 115 | 184 | 2 | 136 |
-| the expression was rewritten |  | 281 | 3 | 100 |
-| a chain written without all of its links | 13 | 121 | 3 | 56 |
+| the expression was rewritten |  | 281 |  | 100 |
+| a chain written without all of its links | 13 | 121 |  | 56 |
 | written although it is not a rule |  | 54 |  |  |
-| case-insensitivity is not honoured |  |  | 3 |  |
 <!-- coverage:end -->
 
 The nginx figures above are measured on the rules in its row here. The table is
@@ -135,24 +135,29 @@ honest by the floors in the tests rather than by being regenerated.
 
 ### Does it load?
 
-nginx is the only target whose output loads. The other three have been run through
-their real servers (Apache with ModSecurity, HAProxy, Traefik) with the same
-corpus, by [`tests/test_apache_blocking.py`](tests/test_apache_blocking.py),
-[`tests/test_haproxy_blocking.py`](tests/test_haproxy_blocking.py) and
-[`tests/test_traefik_blocking.py`](tests/test_traefik_blocking.py), and **none of
-them loads the generated configuration today**:
+Every target has been run through its real server with the same corpus, by
+[`tests/test_nginx_blocking.py`](tests/test_nginx_blocking.py),
+[`tests/test_traefik_blocking.py`](tests/test_traefik_blocking.py),
+[`tests/test_apache_blocking.py`](tests/test_apache_blocking.py) and
+[`tests/test_haproxy_blocking.py`](tests/test_haproxy_blocking.py). **nginx and
+Traefik load what is generated. Apache and HAProxy do not:**
 
 | Target | What the server says | |
 |---|---|---|
 | Apache | `Failed to resolve operator: lt\`: operators written as if they were patterns | [#55](https://github.com/fabriziosalmi/patterns/issues/55) |
 | HAProxy | `unmatched quote`, and fetches that do not exist, however the file is loaded | [#67](https://github.com/fabriziosalmi/patterns/issues/67), [#68](https://github.com/fabriziosalmi/patterns/issues/68) |
-| Traefik | `toml: ...`: a backslash in a TOML basic string is not an escape | [#69](https://github.com/fabriziosalmi/patterns/issues/69) |
 
-Each test records that as the known state and fails the day it changes, so this
-table and the tests are kept together. Each also runs first against a small
-configuration that is known to load, so that the traffic phase is tested before it
-has anything real to measure. The Traefik test runs a stand-in for the `badbot`
-plugin the output is written for, which I could not identify (see #69).
+Traefik needs a plugin, which Traefik's output was not written for until
+[#69](https://github.com/fabriziosalmi/patterns/issues/69): it is now written for
+[`traefik-plugin-blockuseragent`](https://github.com/agence-gaya/traefik-plugin-blockuseragent),
+and the test runs that plugin, unmodified. The plugin sees only the User-Agent, so
+the CRS rules that can be written for Traefik are three; its bad-bot list does the
+rest, and it refuses search engines today ([#78](https://github.com/fabriziosalmi/patterns/issues/78)).
+
+Each test records what the target does as the known state and fails the day it
+changes, so this section and the tests are kept together. Each also runs first
+against a small configuration that is known to load, so that the traffic phase is
+tested before it has anything real to measure.
 
 ## Highlights
 
@@ -178,8 +183,8 @@ curl -LO https://github.com/fabriziosalmi/patterns/releases/latest/download/ngin
 unzip nginx_waf.zip -d /etc/nginx/waf_patterns
 ```
 
-> **Only the Nginx output loads today.** Apache with ModSecurity, HAProxy and Traefik refuse
-> the generated files in their real servers: see [Does it load?](#does-it-load). Releases are
+> **The Apache and HAProxy output does not load today.** Both refuse the generated files in
+> their real servers; nginx and Traefik load them: see [Does it load?](#does-it-load). Releases are
 > dated (`2026-10-01-crs-v4.29.0`), never replaced and signed; [verify one](https://fabriziosalmi.github.io/patterns/verify)
 > before you deploy it, or pin to it with `releases/download/<tag>/`.
 
@@ -283,7 +288,7 @@ http:
     app:
       rule: "Host(`example.com`)"
       service: app
-      middlewares: [waf-protection@file, bot-blocker@file]
+      middlewares: [waf_rce_user_agent@file, bad_bot_block@file]
 ```
 
 ### HAProxy

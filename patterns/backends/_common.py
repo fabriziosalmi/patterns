@@ -32,6 +32,34 @@ def provenance_header(crs_ref: str, title: str) -> str:
     )
 
 
+_TOML_ESCAPES = {"\\": "\\\\", '"': '\\"', "\b": "\\b", "\t": "\\t", "\n": "\\n",
+                 "\f": "\\f", "\r": "\\r"}
+
+
+def toml_string(value: str) -> str:
+    """
+    Writes a string as TOML, so that a parser reads back exactly `value`.
+
+    A regular expression is full of backslashes, and in a TOML basic string
+    (`"..."`) a backslash starts an escape: `"^\\$"` is not valid TOML, and Traefik
+    refuses the file before it reaches a middleware (#69). A literal string
+    (`'...'`) takes every character as it is, so that is used when it can be: it
+    cannot hold a single quote or a control character, and then the string is
+    written as a basic one with those escaped.
+    """
+    if "'" not in value and not any(ord(c) < 0x20 or ord(c) == 0x7F for c in value):
+        return f"'{value}'"
+    out = []
+    for c in value:
+        if c in _TOML_ESCAPES:
+            out.append(_TOML_ESCAPES[c])
+        elif ord(c) < 0x20 or ord(c) == 0x7F:
+            out.append("\\u%04X" % ord(c))
+        else:
+            out.append(c)
+    return '"' + "".join(out) + '"'
+
+
 def without_handled_syntax(argument: str) -> str:
     """
     What a regular expression is once the syntax a backend handles another way
@@ -51,3 +79,22 @@ def validate_regex(pattern: str) -> bool:
     except re.error as e:
         logger.warning(f"Invalid regex: {pattern} - {e}")
         return False
+
+
+def operator_of(rule: dict) -> dict:
+    """
+    The operator of a rule as the IR spells it: name, negated, argument.
+
+    A rule from a document that predates the IR has none, and gets it read out of
+    `pattern` (`@rx foo`, `!@pm a b`, or a bare expression, which is `@rx`).
+    """
+    operator = rule.get("operator")
+    if operator is not None:
+        return operator
+    text = rule.get("pattern", "").strip()
+    negated = text.startswith("!")
+    body = text[1:] if negated else text
+    if body.startswith("@"):
+        name, _, argument = body[1:].partition(" ")
+        return {"name": name, "negated": negated, "argument": argument.strip()}
+    return {"name": "rx", "negated": negated, "argument": body}

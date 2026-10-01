@@ -1,0 +1,5 @@
+# The same, for the bad-bot list.
+[http.middlewares.bad_bot_block.plugin.blockuseragent]
+  regex = [
+    '(?i)nikto',
+  ]

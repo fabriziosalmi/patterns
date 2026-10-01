@@ -43,7 +43,8 @@ Both are deliberately unexotic. The point is not to be exhaustive, it is to be
 the kind of traffic a small site sees in an hour.
 """
 
-from typing import Dict, List
+import re
+from typing import Dict, List, Optional
 
 # What every entry sends unless it says otherwise. A real browser, a real host.
 _DEFAULTS = {
@@ -377,3 +378,37 @@ ATTACKS: List[Dict[str, str]] = [
     request("web shell", "/uploads/c99.php"),
     request("scanner user agent", "/", user_agent="sqlmap/1.8#stable"),
 ]
+
+
+def first_ordinary_match(pattern: str, field: str, ignore_case: bool = False) -> Optional[str]:
+    """
+    The name of the first ordinary request whose `field` an expression matches.
+
+    This is the check that decides what a backend may write. A converted rule has
+    lost the transformations it was written to run after, so an expression that is
+    precise against a decoded value can be indiscriminate against a raw one, and
+    whether a given rule survives that cannot be reasoned about rule by rule: it is
+    measured against BENIGN.
+
+    Python's `re` stands in for the target's engine. They differ on syntax, which
+    each backend's own check handles, not on what these expressions match.
+
+    Args:
+        pattern: The regular expression, as it will be written.
+        field: A key of an entry: `args`, `user_agent`, ...
+        ignore_case: Whether the match ignores case.
+
+    Returns:
+        The `name` of the first matching request, None if it matches none, or if
+        Python cannot compile it (an expression only the target's engine has).
+    """
+    from patterns.dialects import python_equivalent  # here: dialects imports nothing from this module
+
+    try:
+        expression = re.compile(python_equivalent(pattern), re.IGNORECASE if ignore_case else 0)
+    except re.error:
+        return None
+    for entry in BENIGN:
+        if expression.search(entry[field]):
+            return entry["name"]
+    return None

@@ -1,0 +1,1 @@
+Vendored from https://github.com/agence-gaya/traefik-plugin-blockuseragent at v0.1.8 (86ba4f3ce573e91c0dff375ebd059cf31b6ebb85), unmodified.

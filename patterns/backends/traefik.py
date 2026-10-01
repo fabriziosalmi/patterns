@@ -1,127 +1,131 @@
+"""
+The Traefik target: User-Agent expressions for a middleware plugin.
+
+Traefik has no built-in middleware that matches a header against a regular
+expression, so what this writes needs a plugin. The one it is written for is
+`agence-gaya/traefik-plugin-blockuseragent` (Apache-2.0, in Traefik's plugin
+catalog), registered under the name `blockuseragent` in the static configuration:
+
+    experimental:
+      plugins:
+        blockuseragent:
+          moduleName: github.com/agence-gaya/traefik-plugin-blockuseragent
+          version: v0.1.8
+
+It takes `regex`, a list of Go regular expressions, and answers 403 when the
+User-Agent matches any of them (the expression is not anchored). Go's `regexp` is
+RE2, which is what the dialect check here is made for.
+
+This used to write `plugin.badbot` with a `userAgent` list. No plugin by that name
+takes that configuration, and the expressions were written into TOML basic strings
+where a backslash starts an escape, so Traefik refused the file before it got that
+far (#69). tests/test_traefik_blocking.py runs the real plugin.
+"""
+
 import logging
-import re
 from typing import Dict, List, Optional, Tuple
 
+from patterns import dialects
 from patterns.backends import Backend, Capabilities, Compiled, Decision, Target, register
-from patterns.backends._common import (
-    UNSUPPORTED_FILE_OPERATORS,
-    provenance_header,
-    validate_regex,
-    without_handled_syntax,
-)
+from patterns.backends._common import operator_of, provenance_header, toml_string
+from patterns.corpus import first_ordinary_match
 from patterns.ir import IR
 
 logger = logging.getLogger(__name__)
 
-def _sanitize_pattern(pattern: str) -> str:
-    """Internal helper for pattern sanitization."""
-    pattern = pattern.replace("@rx ", "").strip()
-    pattern = re.sub(r"\(\?i\)", "", pattern)  # Remove case-insensitive flag
-
-    # Convert $ to \$
-    pattern = pattern.replace("$", r"\$")
-
-    # Convert { or { to {
-    pattern = re.sub(r"&l(?:brace|cub);?", r"{", pattern)
-    pattern = re.sub(r"&r(?:brace|cub);?", r"}", pattern)
-
-    # Remove unnecessary \.*
-    pattern = re.sub(r"\\\.\*", r"\.*", pattern)
-    pattern = re.sub(r"(?<!\\)\.(?![\w])", r"\.", pattern)  # Escape dots
-
-    # Replace non-capturing groups (?:...) with capturing groups (...)
-    pattern = re.sub(r"\(\?:", "(", pattern)
-
-    return pattern
+# The name the plugin is registered under, and what it is.
+PLUGIN = "blockuseragent"
+PLUGIN_MODULE = "github.com/agence-gaya/traefik-plugin-blockuseragent"
+PLUGIN_VERSION = "v0.1.8"
 
 
-# Operators this backend recognises as not being a regular expression. Any other
-# operator that is not `@rx` is written as if it were one.
-_STRING_OPERATORS = ["@streq", "@contains", "!@eq", "!@within", "@lt", "@ge", "@gt", "@eq", "@ipMatch", "@endsWith"]
-
-
-def explain_pattern(pattern: str) -> Tuple[Optional[str], Optional[Tuple[str, str]]]:
+def explain_pattern(rule: Dict) -> Tuple[Optional[str], Optional[Tuple[str, str]]]:
     """
-    Sanitizes a pattern for use with Traefik's badbot plugin, or says why not.
+    The regular expression a rule matches with, or why it has none.
+
+    Only `@rx` is a regular expression. A phrase list, a comparison or a negated
+    operator written as one would be an expression that means something else.
 
     Returns:
         (the expression, None) or (None, (reason code, detail)).
     """
-    for unsupported in UNSUPPORTED_FILE_OPERATORS:
-        if unsupported in pattern:
-            logger.warning(f"Skipping unsupported pattern: {pattern}")
-            return None, ("operator-unsupported", unsupported)
-
-    # if it is not a string comparison we use regex
-    for operator in _STRING_OPERATORS:
-        if operator in pattern:
-            return None, ("operator-unsupported", operator)
-    sanitized = _sanitize_pattern(pattern) # return the regex
-    if not sanitized:
+    operator = operator_of(rule)
+    if operator["negated"] or operator["name"] != "rx":
+        name = ("!" if operator["negated"] else "") + "@" + operator["name"]
+        logger.warning(f"Skipping rule {rule.get('id')}: {name} is not a regular expression")
+        return None, ("operator-unsupported", name)
+    if not operator["argument"]:
         return None, ("empty-pattern", "nothing is left once the operator is removed")
-    return sanitized, None
-
-
-def sanitize_pattern(pattern: str) -> Optional[str]:
-    """Sanitizes a pattern for use with Traefik's badbot plugin."""
-    return explain_pattern(pattern)[0]
+    return operator["argument"], None
 
 
 def generate_traefik_conf(rules: List[Dict], crs_ref: str = "latest") -> Compiled:
     """Builds the Traefik middleware configuration (middleware.toml)."""
     decisions: List[Decision] = []
-    out: List[str] = [provenance_header(crs_ref, Traefik.title), "[http.middlewares]\n\n"]
+    out: List[str] = [
+        provenance_header(crs_ref, Traefik.title),
+        "# Needs the plugin registered as `%s` in the static configuration:\n"
+        "#   experimental.plugins.%s: moduleName = \"%s\", version = \"%s\"\n"
+        "# See docs/traefik.md.\n#\n" % (PLUGIN, PLUGIN, PLUGIN_MODULE, PLUGIN_VERSION),
+        "[http.middlewares]\n\n",
+    ]
 
-    # Group rules by category AND location.  This is important!
-    # The patterns of a group are a dict, not a set: it drops duplicates and
-    # keeps the order they came in, where a set wrote them in hash-seed order.
+    # Rules by category and location. The expressions of a group are a dict, not a
+    # set: it drops duplicates and keeps the order they came in, where a set wrote
+    # them in hash-seed order.
     categorized_rules: Dict[str, Dict[str, Dict[str, None]]] = {}
 
     for index, rule in enumerate(rules):
         rule_id = rule.get("id", "no_id")
         category = rule.get("category", "generic").lower()
-        location = rule.get("location", "user-agent").lower() # default value!
-        pattern = rule["pattern"]
-        severity = rule.get("severity", "medium").lower() # default
+        location = rule.get("location", "user-agent").lower()
 
-        # Sanitize, but *only* if the location is User-Agent.
-        # We *don't* want to apply regexes to other locations here.
-        if location == "user-agent":
-            sanitized_pattern, why = explain_pattern(pattern)
-            if not sanitized_pattern:
-                decisions.append(Decision(index, False, *why))
-                continue # skip
-            if not validate_regex(sanitized_pattern):
-                decisions.append(Decision(index, False, "invalid-regex", "Python's re does not compile it"))
-                continue # skip
-        else:
-            logger.warning(f"Skipping rule with unsupported location '{location}' for Traefik: {rule_id}")
+        # The plugin sees the User-Agent header and nothing else.
+        if location != "user-agent":
             decisions.append(Decision(index, False, "location-unsupported", location))
             continue
 
-        # Initialize category/location if needed
-        if category not in categorized_rules:
-            categorized_rules[category] = {}
-        if location not in categorized_rules[category]:
-            categorized_rules[category][location] = {}
+        # The plugin refuses and cannot record. nginx writes every severity and
+        # refuses only on `high`, so the rules that merely note something (CRS 920330
+        # is an empty User-Agent, a notice) are in its variables and not in its 403s.
+        # Here a rule that is written refuses, so only `high` is written.
+        severity = rule.get("severity", "medium")
+        if severity != "high":
+            decisions.append(Decision(index, False, "severity-below-blocking", severity))
+            continue
 
-        # Add the *escaped* pattern to the group.
-        categorized_rules[category][location][sanitized_pattern] = None
-        decisions.append(Decision(index, True, location=location, pattern=sanitized_pattern))
+        expression, why = explain_pattern(rule)
+        if not expression:
+            decisions.append(Decision(index, False, *why))
+            continue
 
-    # Write the configuration
+        # What the plugin's engine refuses is a middleware that fails to start,
+        # and with it every request through the router.
+        problem = dialects.check(Traefik.capabilities.dialect, expression)
+        if problem:
+            logger.warning(f"Skipping rule {rule_id}: the expression {problem}")
+            decisions.append(Decision(index, False, "invalid-regex", problem))
+            continue
+
+        # Measured, not assumed: a rule that refuses ordinary traffic is not written.
+        ordinary = first_ordinary_match(expression, "user_agent")
+        if ordinary is not None:
+            logger.warning(f"Excluding rule {rule_id}: it matches an ordinary request ({ordinary})")
+            decisions.append(Decision(index, False, "matches-benign-traffic", ordinary))
+            continue
+
+        categorized_rules.setdefault(category, {}).setdefault(location, {})[expression] = None
+        decisions.append(Decision(index, True, location=location, pattern=expression))
+
     for category, location_rules in categorized_rules.items():
-      for location, patterns in location_rules.items():
-        # Create a unique middleware name
-        middleware_name = f"waf_{category}_{location}".replace("-", "_")
-        out.append(f"[http.middlewares.{middleware_name}]\n")
-        out.append(f"  [http.middlewares.{middleware_name}.plugin.badbot]\n")
-        out.append("    userAgent = [\n")
-        # Properly escape for TOML (and for regex within the string)
-        for pattern in patterns:
-            # No extra escape for TOML, because we write the full regex
-            out.append(f'      "{pattern}",\n')
-        out.append("    ]\n\n")
+        for location, expressions in location_rules.items():
+            name = f"waf_{category}_{location}".replace("-", "_")
+            out.append(f"[http.middlewares.{name}]\n")
+            out.append(f"  [http.middlewares.{name}.plugin.{PLUGIN}]\n")
+            out.append("    regex = [\n")
+            for expression in expressions:
+                out.append(f"      {toml_string(expression)},\n")
+            out.append("    ]\n\n")
 
     return Compiled({"middleware.toml": "".join(out)}, decisions)
 
@@ -131,16 +135,14 @@ class Traefik(Backend):
     name = "traefik"
     title = "Traefik"
 
-    # The badbot plugin takes a list of regular expressions for the User-Agent
-    # header, and nothing else. The backend removes `(?i)` and does not replace it
-    # with anything, so the match is case-sensitive.
+    # The plugin takes a list of Go regular expressions for the User-Agent header,
+    # and nothing else. `(?i)` is kept: Go honours it.
     capabilities = Capabilities(
         dialect="re2",
         operators=frozenset({"rx"}),
         transformations=frozenset(),
-        case_insensitive=False,
-        locations={"user-agent": Target("userAgent")},
-        faithful=without_handled_syntax,
+        case_insensitive=True,
+        locations={"user-agent": Target("User-Agent header")},
     )
 
     def compile(self, ir: IR) -> Compiled:

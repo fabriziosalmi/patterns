@@ -9,6 +9,10 @@ import random
 import re
 from tqdm import tqdm  # Import tqdm for progress bar
 
+from patterns import dialects
+from patterns.backends._common import toml_string
+from patterns.backends.traefik import PLUGIN
+
 # Logging setup
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -169,9 +173,28 @@ def generate_traefik_conf(bots):
     Generate Traefik WAF configuration for blocking bots.
     """
     path = Path(OUTPUT_DIRS['traefik'], "bots.toml")
-    content = "[http.middlewares]\n[http.middlewares.bad_bot_block]\n  [http.middlewares.bad_bot_block.plugin.badbot]\n    userAgent = [\n"
+    # The plugin the Traefik output is written for (patterns/backends/traefik.py): a
+    # list of Go regular expressions for the User-Agent, in TOML that means what it
+    # says. Case is ignored, as the nginx list does it.
+    # An entry the plugin's engine cannot compile stops the whole middleware from
+    # starting (the list had `Yandex(?!Search)`, and Go's RE2 has no lookahead), so
+    # it is left out, and said so.
+    written, skipped = [], []
     for bot in bots:
-        content += f'      "{bot}",\n'
+        expression = "(?i)" + bot
+        problem = dialects.check("re2", expression)
+        if problem:
+            skipped.append((bot, problem))
+        else:
+            written.append(expression)
+    content = ""
+    for bot, problem in skipped:
+        content += f"# Not written: {bot} {problem}\n"
+        logging.warning(f"Traefik: leaving out {bot!r}: {problem}")
+    content += ("[http.middlewares]\n[http.middlewares.bad_bot_block]\n"
+                f"  [http.middlewares.bad_bot_block.plugin.{PLUGIN}]\n    regex = [\n")
+    for expression in written:
+        content += f"      {toml_string(expression)},\n"
     content += "    ]\n"
     write_to_file(path, content)
 

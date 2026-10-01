@@ -67,12 +67,14 @@ http-request deny deny_status 403 if bad_bot
 
 ## Traefik
 
+`bots.toml` is a middleware named `bad_bot_block` for the [`blockuseragent`](https://github.com/agence-gaya/traefik-plugin-blockuseragent) plugin: a list of Go regular expressions, each matched against the `User-Agent` header, case ignored.
+
 ```toml
-[http.middlewares.bot-blocker]
-  # populated automatically by bots.toml
+[http.middlewares.bad_bot_block.plugin.blockuseragent]
+  regex = [ '(?i)008\/', '(?i)AhrefsBot', ... ]
 ```
 
-Reference `bot-blocker@file` from the routers you want to protect.
+Register the plugin in Traefik's static configuration and reference `bad_bot_block@file` from the routers you want to protect: [Traefik](/traefik) has both steps. An entry Go's regular expressions cannot compile (a lookahead, a backreference) is left out of the file, with a comment that says which, because one such entry stops the whole middleware from starting.
 
 ## What gets blocked
 
