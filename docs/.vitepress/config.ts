@@ -16,7 +16,7 @@ const icons = {
 export default defineConfig({
     title: 'Patterns',
     titleTemplate: ':title — Patterns',
-    description: 'Automated OWASP CRS and bad-bot rules for Nginx, Apache, Traefik, and HAProxy.',
+    description: 'Automated OWASP CRS and bad-bot rules for Nginx, Apache, Traefik, HAProxy, and Envoy.',
     base: '/patterns/',
     // The hostname carries the base path on purpose: VitePress joins it with each
     // page's route, so without it every URL in the sitemap would point at a 404.
@@ -60,7 +60,7 @@ export default defineConfig({
         ['meta', { name: 'apple-mobile-web-app-status-bar-style', content: 'default' }],
         ['meta', { property: 'og:type', content: 'website' }],
         ['meta', { property: 'og:title', content: 'Patterns — OWASP CRS WAF rules' }],
-        ['meta', { property: 'og:description', content: 'Automated OWASP CRS and bad-bot rules for Nginx, Apache, Traefik, and HAProxy.' }],
+        ['meta', { property: 'og:description', content: 'Automated OWASP CRS and bad-bot rules for Nginx, Apache, Traefik, HAProxy, and Envoy.' }],
         ['meta', { name: 'twitter:card', content: 'summary_large_image' }]
     ],
 
@@ -74,14 +74,15 @@ export default defineConfig({
         icons,
 
         nav: [
-            { text: 'Documentation', link: '/getting-started', activeMatch: '^/(getting-started|nginx|apache|traefik|haproxy|badbots|api|ir|coverage|verify)' },
+            { text: 'Documentation', link: '/getting-started', activeMatch: '^/(getting-started|nginx|apache|traefik|haproxy|envoy|badbots|api|ir|coverage|verify)' },
             {
                 text: 'Web Servers',
                 items: [
                     { text: 'Nginx', link: '/nginx' },
                     { text: 'Apache (ModSecurity)', link: '/apache' },
                     { text: 'Traefik', link: '/traefik' },
-                    { text: 'HAProxy', link: '/haproxy' }
+                    { text: 'HAProxy', link: '/haproxy' },
+                    { text: 'Envoy', link: '/envoy' }
                 ]
             },
             { text: 'Bad Bots', link: '/badbots' },
@@ -103,7 +104,8 @@ export default defineConfig({
                     { text: 'Nginx', link: '/nginx' },
                     { text: 'Apache (ModSecurity)', link: '/apache' },
                     { text: 'Traefik', link: '/traefik' },
-                    { text: 'HAProxy', link: '/haproxy' }
+                    { text: 'HAProxy', link: '/haproxy' },
+                    { text: 'Envoy', link: '/envoy' }
                 ]
             },
             {

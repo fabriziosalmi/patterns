@@ -22,6 +22,7 @@ The fastest path. A scheduled GitHub Actions workflow builds every archive each 
 | `apache_waf.zip` | Per-category ModSecurity `.conf` files, `bots.conf` | Apache + mod_security2 |
 | `traefik_waf.zip` | `middleware.toml`, `bots.toml` | Traefik (file provider) |
 | `haproxy_waf.zip` | `waf.cfg`, pattern files `waf-*.acl`, `bots.acl` | HAProxy |
+| `envoy_waf.zip` | `waf-rbac.yaml`, `runtime.yaml`, `bots-rbac.yaml` | Envoy (RBAC filter) |
 
 Pick one, extract, then jump to the matching integration guide.
 
@@ -43,7 +44,7 @@ python owasp2json.py
 
 # 2. Compile the JSON into native rules for your platform
 python3 -m patterns build --all              # every target…
-python3 -m patterns build --target nginx     # …or one: nginx, apache, traefik, haproxy
+python3 -m patterns build --target nginx     # …or one: nginx, apache, traefik, haproxy, envoy
 
 # 3. Generate bad-bot blocklists alongside
 python badbots.py
@@ -62,7 +63,8 @@ waf_patterns/
 ├── nginx/      # waf_maps.conf, waf_rules.conf, bots.conf
 ├── apache/     # sqli.conf, xss.conf, rce.conf, lfi.conf, … bots.conf
 ├── traefik/    # middleware.toml, bots.toml
-└── haproxy/    # waf.cfg, waf-*.acl, bots.acl
+├── haproxy/    # waf.cfg, waf-*.acl, bots.acl
+└── envoy/      # waf-rbac.yaml, runtime.yaml, bots-rbac.yaml
 ```
 
 ## Next steps
@@ -73,6 +75,7 @@ Choose your platform to wire the rules into a running server:
 - [Apache (ModSecurity) integration](/apache)
 - [Traefik integration](/traefik)
 - [HAProxy integration](/haproxy)
+- [Envoy integration](/envoy)
 
 For details on the bot blocklist itself, see [Bad Bot Detection](/badbots). For a reference of every script and the JSON schema that ties them together, see the [API reference](/api).
 
@@ -84,13 +87,13 @@ For details on the bot blocklist itself, see [Bad Bot Detection](/badbots). For 
    │ coreruleset (GH)    │                   │   → owasp_rules.json │
    └─────────────────────┘                   └──────────┬───────────┘
                                                         │
-            ┌─────────────────┬──────────────────┬──────┴──────────┐
-            ▼                 ▼                  ▼                 ▼
-         nginx            apache           traefik           haproxy
+            ┌────────────┬────────────┬─────────┴──┬────────────┬────────────┐
+            ▼            ▼            ▼            ▼            ▼
+         nginx        apache       traefik      haproxy       envoy
                   (patterns/backends/, run by `python3 -m patterns build`)
-            │                 │                  │                 │
-            ▼                 ▼                  ▼                 ▼
-       nginx_waf.zip    apache_waf.zip    traefik_waf.zip    haproxy_waf.zip
+            │            │            │            │            │
+            ▼            ▼            ▼            ▼            ▼
+       nginx_waf.zip apache_waf.zip traefik_waf.zip haproxy_waf.zip envoy_waf.zip
                           (published as a GitHub Release)
 ```
 

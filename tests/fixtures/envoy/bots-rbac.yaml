@@ -1,0 +1,90 @@
+# A bad-bot list that does what the generated one should: it refuses the bots and the HTTP
+# libraries and tools it names, and nothing a site wants. The test runs it first, so that the
+# checks on the bad-bot list are shown to pass on a list that is right.
+- name: waf_bots
+  typed_config:
+    "@type": type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
+    rules:
+      action: DENY
+      policies:
+        waf_bots_user_agent:
+          permissions:
+          - or_rules:
+              rules:
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
+                      regex: '(?s:.*)(?i:sqlmap)(?s:.*)'
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
+                      regex: '(?s:.*)(?i:AhrefsBot)(?s:.*)'
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
+                      regex: '(?s:.*)(?i:SemrushBot)(?s:.*)'
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
+                      regex: '(?s:.*)(?i:MJ12bot)(?s:.*)'
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
+                      regex: '(?s:.*)(?i:curl)(?s:.*)'
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
+                      regex: '(?s:.*)(?i:python-requests)(?s:.*)'
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
+                      regex: '(?s:.*)(?i:Go-http-client)(?s:.*)'
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
+                      regex: '(?s:.*)(?i:okhttp)(?s:.*)'
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
+                      regex: '(?s:.*)(?i:Dart/)(?s:.*)'
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
+                      regex: '(?s:.*)(?i:node-fetch)(?s:.*)'
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
+                      regex: '(?s:.*)(?i:axios)(?s:.*)'
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
+                      regex: '(?s:.*)(?i:^Java/)(?s:.*)'
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
+                      regex: '(?s:.*)(?i:PostmanRuntime)(?s:.*)'
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
+                      regex: '(?s:.*)(?i:Wget)(?s:.*)'
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
+                      regex: '(?s:.*)(?i:HTTPie)(?s:.*)'
+          principals:
+          - any: true

@@ -169,6 +169,7 @@ python badbots.py
 | Apache | `waf_patterns/apache/bots.conf` |
 | Traefik | `waf_patterns/traefik/bots.toml` |
 | HAProxy | `waf_patterns/haproxy/bots.acl` |
+| Envoy | `waf_patterns/envoy/bots-rbac.yaml` |
 
 | Env var | Purpose |
 |---------|---------|

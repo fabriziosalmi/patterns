@@ -73,6 +73,7 @@ We welcome pull requests! Here's how to submit one:
    python3 tests/test_nginx_blocking.py
    python3 tests/test_apache_blocking.py
    python3 tests/test_haproxy_blocking.py
+   python3 tests/test_envoy_blocking.py
    python3 tests/test_traefik_blocking.py
    ```
    What each target does today is `EXPECTED` at the top of its test, with the issue that tracks it.

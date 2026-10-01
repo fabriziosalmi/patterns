@@ -1,0 +1,31 @@
+# A filter that is known to load, for checking the test itself: if this does not pass, the
+# harness is what is broken, not the generated output. It is what the generated waf-rbac.yaml
+# is, with two expressions.
+- name: waf
+  typed_config:
+    "@type": type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
+    rules:
+      action: DENY
+      policies:
+        waf_user_agent:
+          permissions:
+          - or_rules:
+              rules:
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
+                      regex: '(?s:.*)(?i:sqlmap)(?s:.*)'
+          principals:
+          - any: true
+        waf_path:
+          permissions:
+          - or_rules:
+              rules:
+              - header:
+                  name: ':path'
+                  string_match:
+                    safe_regex:
+                      regex: '(?s:.*)(?:<script)(?s:.*)'
+          principals:
+          - any: true

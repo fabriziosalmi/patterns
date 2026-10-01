@@ -82,6 +82,33 @@ def modsecurity_unquote(text: str) -> str:
     return re.sub(r'\\(["\\])', r"\1", text)
 
 
+_YAML_ESCAPES = {"\\": "\\\\", '"': '\\"', "\t": "\\t", "\n": "\\n", "\r": "\\r", "\x85": "\\N",
+                 "\u2028": "\\L", "\u2029": "\\P"}
+
+
+def yaml_string(value: str) -> str:
+    """
+    Writes a string as a YAML scalar, so that a parser reads back exactly `value`.
+
+    A single-quoted scalar takes every character as it is and only a quote has to be
+    doubled, which is what a regular expression full of backslashes needs: in a
+    double-quoted one `\\d` is an error. A single-quoted scalar cannot hold a control
+    character or a line break, and then the string is written double-quoted with those
+    escaped.
+    """
+    if all(c == "\t" or " " <= c <= "~" or c >= "\xa0" and c not in "\u2028\u2029" for c in value):
+        return "'" + value.replace("'", "''") + "'"
+    out = []
+    for c in value:
+        if c in _YAML_ESCAPES:
+            out.append(_YAML_ESCAPES[c])
+        elif ord(c) < 0x20 or 0x7F <= ord(c) < 0xA0:
+            out.append("\\x%02X" % ord(c))
+        else:
+            out.append(c)
+    return '"' + "".join(out) + '"'
+
+
 def ascii_lower(value: str) -> str:
     """What `t:lowercase` in ModSecurity and `lower` in HAProxy do: ASCII only, as C's tolower does."""
     return "".join(c.lower() if c < "\x80" else c for c in value)

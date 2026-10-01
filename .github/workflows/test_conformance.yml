@@ -54,3 +54,16 @@ jobs:
     # tests/fixtures/traefik/plugin, unmodified).
     - name: Load the Traefik middleware in Traefik
       run: python3 tests/test_traefik_blocking.py
+
+  envoy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: "3.11"
+    - name: Install PyYAML
+      run: pip install pyyaml
+    # A real Envoy: the RBAC filter in a bootstrap with the runtime, as docs/envoy.md shows.
+    - name: Load the Envoy RBAC filter in Envoy
+      run: python3 tests/test_envoy_blocking.py

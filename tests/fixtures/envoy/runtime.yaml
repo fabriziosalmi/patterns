@@ -1,0 +1,8 @@
+layered_runtime:
+  layers:
+  - name: waf
+    static_layer:
+      re2:
+        max_program_size:
+          error_level: 1000000
+          warn_level: 1000000

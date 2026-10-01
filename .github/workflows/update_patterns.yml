@@ -128,11 +128,12 @@ jobs:
 
     # These three record what each target does today (a known defect, with its
     # issue) and fail when that changes, for better or worse.
-    - name: 🚦 Apache, HAProxy and Traefik in their servers
+    - name: 🚦 Apache, HAProxy, Traefik and Envoy in their servers
       run: |
         { python3 tests/test_apache_blocking.py \
           && python3 tests/test_haproxy_blocking.py \
-          && python3 tests/test_traefik_blocking.py; } 2>&1 | tee -a gate.log
+          && python3 tests/test_traefik_blocking.py \
+          && python3 tests/test_envoy_blocking.py; } 2>&1 | tee -a gate.log
 
     # --- Publish ------------------------------------------------------------
 
@@ -262,18 +263,21 @@ jobs:
         APACHE_BOTS=$(grep -c '^SecRule REQUEST_HEADERS' waf_patterns/apache/bots.conf || echo 0)
         TRAEFIK_BOTS=$(grep -cE "^\s+['\"]" waf_patterns/traefik/bots.toml || echo 0)
         HAPROXY_BOTS=$(grep -vc '^#' waf_patterns/haproxy/bots.acl || echo 0)
+        ENVOY_BOTS=$(grep -c 'safe_regex:' waf_patterns/envoy/bots-rbac.yaml || echo 0)
 
         # Archive sizes (human-readable)
         NGINX_SIZE=$(du -h dist/nginx_waf.zip | cut -f1)
         APACHE_SIZE=$(du -h dist/apache_waf.zip | cut -f1)
         TRAEFIK_SIZE=$(du -h dist/traefik_waf.zip | cut -f1)
         HAPROXY_SIZE=$(du -h dist/haproxy_waf.zip | cut -f1)
+        ENVOY_SIZE=$(du -h dist/envoy_waf.zip | cut -f1)
 
         # SHA-256 checksums
         NGINX_SHA=$(sha256sum dist/nginx_waf.zip | cut -d' ' -f1)
         APACHE_SHA=$(sha256sum dist/apache_waf.zip | cut -d' ' -f1)
         TRAEFIK_SHA=$(sha256sum dist/traefik_waf.zip | cut -d' ' -f1)
         HAPROXY_SHA=$(sha256sum dist/haproxy_waf.zip | cut -d' ' -f1)
+        ENVOY_SHA=$(sha256sum dist/envoy_waf.zip | cut -d' ' -f1)
 
         # What each target does with each rule, from the record the files were
         # built from (waf_patterns/coverage.json).
@@ -301,6 +305,7 @@ jobs:
         | Apache   | ModSecurity       | ${APACHE_BOTS}   | \`apache_waf.zip\`    | ${APACHE_SIZE}    |
         | Traefik  | Middleware TOML   | ${TRAEFIK_BOTS}   | \`traefik_waf.zip\`   | ${TRAEFIK_SIZE}    |
         | HAProxy  | Pattern files     | ${HAPROXY_BOTS}   | \`haproxy_waf.zip\`   | ${HAPROXY_SIZE}    |
+        | Envoy    | RBAC filter       | ${ENVOY_BOTS}   | \`envoy_waf.zip\`     | ${ENVOY_SIZE}    |
 
         ### Quick install
 
@@ -309,7 +314,7 @@ jobs:
         unzip nginx_waf.zip -d /etc/nginx/waf_patterns
         \`\`\`
 
-        Integration guides → [Nginx](https://fabriziosalmi.github.io/patterns/nginx) · [Apache](https://fabriziosalmi.github.io/patterns/apache) · [Traefik](https://fabriziosalmi.github.io/patterns/traefik) · [HAProxy](https://fabriziosalmi.github.io/patterns/haproxy)
+        Integration guides → [Nginx](https://fabriziosalmi.github.io/patterns/nginx) · [Apache](https://fabriziosalmi.github.io/patterns/apache) · [Traefik](https://fabriziosalmi.github.io/patterns/traefik) · [HAProxy](https://fabriziosalmi.github.io/patterns/haproxy) · [Envoy](https://fabriziosalmi.github.io/patterns/envoy)
 
         ### What each target does with each rule
 
@@ -336,6 +341,7 @@ jobs:
         ${APACHE_SHA}  apache_waf.zip
         ${TRAEFIK_SHA}  traefik_waf.zip
         ${HAPROXY_SHA}  haproxy_waf.zip
+        ${ENVOY_SHA}  envoy_waf.zip
         \`\`\`
 
         \`\`\`bash

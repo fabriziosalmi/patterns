@@ -13,26 +13,27 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 | Apache (ModSecurity) | 7 | 159 | 0 | 583 |
 | Traefik | 0 | 3 | 0 | 746 |
 | HAProxy | 6 | 160 | 0 | 583 |
+| Envoy | 6 | 164 | 0 | 579 |
 
 **Why a record is dropped**, by the first reason the backend found:
 
-| Reason | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
-|---|---:|---:|---:|---:|
-| an operator the backend cannot express | 292 | 319 | 2 | 319 |
-| matched on a request component the target does not have | 78 | 65 | 561 | 65 |
-| part of a chain, and the target cannot require all of it | 128 | 128 | 128 | 128 |
-| not a rule: it changes another rule | 54 | 54 | 54 | 54 |
-| it refuses ordinary traffic once converted | 10 | 16 |  | 8 |
-| longer than the target accepts | 16 |  |  |  |
-| its severity is below what refuses, and the target cannot only record |  |  | 1 | 8 |
-| it records and does not refuse | 1 | 1 |  | 1 |
+| Reason | Nginx | Apache (ModSecurity) | Traefik | HAProxy | Envoy |
+|---|---:|---:|---:|---:|---:|
+| an operator the backend cannot express | 292 | 319 | 2 | 319 | 319 |
+| matched on a request component the target does not have | 78 | 65 | 561 | 65 | 65 |
+| part of a chain, and the target cannot require all of it | 128 | 128 | 128 | 128 | 128 |
+| not a rule: it changes another rule | 54 | 54 | 54 | 54 | 54 |
+| it refuses ordinary traffic once converted | 10 | 16 |  | 8 | 4 |
+| its severity is below what refuses, and the target cannot only record |  |  | 1 | 8 | 8 |
+| longer than the target accepts | 16 |  |  |  |  |
+| it records and does not refuse | 1 | 1 |  | 1 | 1 |
 
 **What a written rule loses**, in how many of them:
 
-| Loss | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
-|---|---:|---:|---:|---:|
-| matched on other variables than the rule names | 153 | 156 | 3 | 160 |
-| transformations the rule was written to run after are not applied | 122 | 112 | 2 | 111 |
+| Loss | Nginx | Apache (ModSecurity) | Traefik | HAProxy | Envoy |
+|---|---:|---:|---:|---:|---:|
+| matched on other variables than the rule names | 153 | 156 | 3 | 160 | 164 |
+| transformations the rule was written to run after are not applied | 122 | 112 | 2 | 111 | 115 |
 <!-- coverage:end -->
 
 The numbers are counted on the records of the [intermediate representation](/ir), which include the links of a chain and the `SecRuleUpdateTargetById` directives, so they are a little more than the number of CRS rules. [`coverage.json`](https://github.com/fabriziosalmi/patterns/blob/main/waf_patterns/coverage.json) holds the verdict for each record, and is published with every release.
@@ -57,7 +58,7 @@ No target writes any record of a chain today: a chain matches when every record 
 
 ## Does it load?
 
-Whether a rule is written, and whether the server accepts what was written, are different questions. Each target is also run through its real server with the same corpus of ordinary and hostile requests: [Apache with ModSecurity](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_apache_blocking.py), [HAProxy](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_haproxy_blocking.py) and [Traefik](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_traefik_blocking.py), and nginx by [its own test](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_nginx_blocking.py). The [README](https://github.com/fabriziosalmi/patterns#does-it-load) says what they found. Where a target does not load, the test records the known state and the issue that tracks it, and fails the day that changes. Today all four load what is generated.
+Whether a rule is written, and whether the server accepts what was written, are different questions. Each target is also run through its real server with the same corpus of ordinary and hostile requests: [Apache with ModSecurity](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_apache_blocking.py), [HAProxy](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_haproxy_blocking.py), [Envoy](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_envoy_blocking.py) and [Traefik](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_traefik_blocking.py), and nginx by [its own test](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_nginx_blocking.py). The [README](https://github.com/fabriziosalmi/patterns#does-it-load) says what they found. Where a target does not load, the test records the known state and the issue that tracks it, and fails the day that changes. Today all five load what is generated.
 
 ## Regular expression dialects
 
@@ -66,7 +67,7 @@ A pattern that does not compile on a target is a configuration that fails to loa
 | Dialect | Used by | |
 |---|---|---|
 | `pcre` | Nginx, Apache (ModSecurity), HAProxy (built with PCRE2, as the official image is) | Accepts what Python can parse once PCRE-only syntax is rewritten. |
-| `re2` | Traefik (Go's `regexp`) | No lookaround, backreference, atomic group, possessive quantifier or conditional. |
+| `re2` | Traefik (Go's `regexp`), Envoy (Google's RE2) | No lookaround, backreference, atomic group, possessive quantifier or conditional. |
 
 The check needs Python 3.11 or later, and `build` says so when it is skipped.
 

@@ -4,7 +4,7 @@ layout: home
 hero:
   name: Patterns
   text: Production-grade WAF rules, on autopilot.
-  tagline: Automated OWASP Core Rule Set and bad-bot patterns, converted into native configurations for Nginx, Apache, Traefik, and HAProxy &mdash; refreshed every day.
+  tagline: Automated OWASP Core Rule Set and bad-bot patterns, converted into native configurations for Nginx, Apache, Traefik, HAProxy, and Envoy &mdash; refreshed every day.
   actions:
     - theme: brand
       text: Get Started

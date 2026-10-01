@@ -17,7 +17,7 @@ curl -LO https://github.com/fabriziosalmi/patterns/releases/download/2026-09-30-
 
 | File | |
 |---|---|
-| `nginx_waf.zip`, `apache_waf.zip`, `traefik_waf.zip`, `haproxy_waf.zip` | The files of each target. The same files give the same archive, byte for byte, whatever the day or the machine. |
+| `nginx_waf.zip`, `apache_waf.zip`, `traefik_waf.zip`, `haproxy_waf.zip`, `envoy_waf.zip` | The files of each target. The same files give the same archive, byte for byte, whatever the day or the machine. |
 | `coverage.json` | What each target does with each rule. See [Coverage](/coverage). |
 | `changes.json` | What changed since the previous release. |
 | `SHA256SUMS` | The hash of each of the files above. |

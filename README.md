@@ -5,7 +5,7 @@
   <p>
     Automated <a href="https://github.com/coreruleset/coreruleset">OWASP Core Rule Set</a> and
     bad-bot patterns, converted into native configurations for
-    <strong>Nginx</strong>, <strong>Apache</strong>, <strong>Traefik</strong>, and <strong>HAProxy</strong>
+    <strong>Nginx</strong>, <strong>Apache</strong>, <strong>Traefik</strong>, <strong>HAProxy</strong>, and <strong>Envoy</strong>
     &mdash; refreshed every day.
   </p>
   <p>
@@ -117,26 +117,27 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 | Apache (ModSecurity) | 7 | 159 | 0 | 583 |
 | Traefik | 0 | 3 | 0 | 746 |
 | HAProxy | 6 | 160 | 0 | 583 |
+| Envoy | 6 | 164 | 0 | 579 |
 
 **Why a record is dropped**, by the first reason the backend found:
 
-| Reason | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
-|---|---:|---:|---:|---:|
-| an operator the backend cannot express | 292 | 319 | 2 | 319 |
-| matched on a request component the target does not have | 78 | 65 | 561 | 65 |
-| part of a chain, and the target cannot require all of it | 128 | 128 | 128 | 128 |
-| not a rule: it changes another rule | 54 | 54 | 54 | 54 |
-| it refuses ordinary traffic once converted | 10 | 16 |  | 8 |
-| longer than the target accepts | 16 |  |  |  |
-| its severity is below what refuses, and the target cannot only record |  |  | 1 | 8 |
-| it records and does not refuse | 1 | 1 |  | 1 |
+| Reason | Nginx | Apache (ModSecurity) | Traefik | HAProxy | Envoy |
+|---|---:|---:|---:|---:|---:|
+| an operator the backend cannot express | 292 | 319 | 2 | 319 | 319 |
+| matched on a request component the target does not have | 78 | 65 | 561 | 65 | 65 |
+| part of a chain, and the target cannot require all of it | 128 | 128 | 128 | 128 | 128 |
+| not a rule: it changes another rule | 54 | 54 | 54 | 54 | 54 |
+| it refuses ordinary traffic once converted | 10 | 16 |  | 8 | 4 |
+| its severity is below what refuses, and the target cannot only record |  |  | 1 | 8 | 8 |
+| longer than the target accepts | 16 |  |  |  |  |
+| it records and does not refuse | 1 | 1 |  | 1 | 1 |
 
 **What a written rule loses**, in how many of them:
 
-| Loss | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
-|---|---:|---:|---:|---:|
-| matched on other variables than the rule names | 153 | 156 | 3 | 160 |
-| transformations the rule was written to run after are not applied | 122 | 112 | 2 | 111 |
+| Loss | Nginx | Apache (ModSecurity) | Traefik | HAProxy | Envoy |
+|---|---:|---:|---:|---:|---:|
+| matched on other variables than the rule names | 153 | 156 | 3 | 160 | 164 |
+| transformations the rule was written to run after are not applied | 122 | 112 | 2 | 111 | 115 |
 <!-- coverage:end -->
 
 The nginx figures above are measured on the rules in its row here. The table is
@@ -149,7 +150,8 @@ Every target has been run through its real server with the same corpus, by
 [`tests/test_nginx_blocking.py`](tests/test_nginx_blocking.py),
 [`tests/test_traefik_blocking.py`](tests/test_traefik_blocking.py),
 [`tests/test_apache_blocking.py`](tests/test_apache_blocking.py) and
-[`tests/test_haproxy_blocking.py`](tests/test_haproxy_blocking.py). **All four load what
+[`tests/test_haproxy_blocking.py`](tests/test_haproxy_blocking.py) and
+[`tests/test_envoy_blocking.py`](tests/test_envoy_blocking.py). **All five load what
 is generated, and none of them refuses an ordinary request of the corpus.** Two of them
 did not until recently:
 
@@ -189,8 +191,8 @@ tested before it has anything real to measure.
 | | |
 |---|---|
 | **OWASP CRS coverage** | SQLi, XSS, RCE, LFI, RFI, plus generic anomaly and protocol-violation rules. |
-| **Native output** | Nginx `map`/`if`, Apache `SecRule`, Traefik middleware TOML, HAProxy pattern files. |
-| **Bad-bot blocking** | User-Agent lists from public sources. Search engines, link previews and uptime monitors are left out of them, and the nginx, Apache, Traefik and HAProxy tests check it in the real server. HTTP libraries and tools (`curl`, `python-requests`, OkHttp, ...) are refused on purpose. |
+| **Native output** | Nginx `map`/`if`, Apache `SecRule`, Traefik middleware TOML, HAProxy pattern files, an Envoy RBAC filter. |
+| **Bad-bot blocking** | User-Agent lists from public sources. Search engines, link previews and uptime monitors are left out of them, and the nginx, Apache, Traefik, HAProxy and Envoy tests check it in the real server. HTTP libraries and tools (`curl`, `python-requests`, OkHttp, ...) are refused on purpose. |
 | **Nightly, tested** | A scheduled GitHub Actions workflow rebuilds every backend, runs the tests on the result, and publishes only if they pass and something changed. |
 | **Pre-built, signed archives** | Skip the toolchain &mdash; download `nginx_waf.zip`, `apache_waf.zip`, `traefik_waf.zip`, or `haproxy_waf.zip` from a dated release that is never replaced, and [verify it](https://fabriziosalmi.github.io/patterns/verify). |
 | **Measured** | What each target does with each rule is generated and published: [coverage](https://fabriziosalmi.github.io/patterns/coverage). |
@@ -214,8 +216,9 @@ unzip nginx_waf.zip -d /etc/nginx/waf_patterns
 
 Then follow the [Nginx](https://fabriziosalmi.github.io/patterns/nginx),
 [Apache](https://fabriziosalmi.github.io/patterns/apache),
-[Traefik](https://fabriziosalmi.github.io/patterns/traefik), or
-[HAProxy](https://fabriziosalmi.github.io/patterns/haproxy) integration guide.
+[Traefik](https://fabriziosalmi.github.io/patterns/traefik),
+[HAProxy](https://fabriziosalmi.github.io/patterns/haproxy), or
+[Envoy](https://fabriziosalmi.github.io/patterns/envoy) integration guide.
 
 ### Option 2 &mdash; build from source
 
@@ -228,7 +231,7 @@ pip install -r requirements.txt
 
 python owasp2json.py                         # 1. Fetch the latest OWASP CRS into owasp_rules.json
 python3 -m patterns build --all              # 2. Compile it for every target…
-python3 -m patterns build --target nginx     #    …or for one: nginx, apache, traefik, haproxy
+python3 -m patterns build --target nginx     #    …or for one: nginx, apache, traefik, haproxy, envoy
 python badbots.py                            # 3. Generate bad-bot blocklists
 ```
 
@@ -244,13 +247,13 @@ Generated files land in `waf_patterns/<platform>/`.
    │ coreruleset (GH)    │                   │   → owasp_rules.json │
    └─────────────────────┘                   └──────────┬───────────┘
                                                         │
-            ┌─────────────────┬──────────────────┬──────┴──────────┐
-            ▼                 ▼                  ▼                 ▼
-         nginx            apache           traefik           haproxy
+            ┌────────────┬────────────┬─────────┴──┬────────────┬────────────┐
+            ▼            ▼            ▼            ▼            ▼
+         nginx        apache       traefik      haproxy       envoy
                   (patterns/backends/, run by `python3 -m patterns build`)
-            │                 │                  │                 │
-            ▼                 ▼                  ▼                 ▼
-       nginx_waf.zip    apache_waf.zip    traefik_waf.zip    haproxy_waf.zip
+            │            │            │            │            │
+            ▼            ▼            ▼            ▼            ▼
+       nginx_waf.zip apache_waf.zip traefik_waf.zip haproxy_waf.zip envoy_waf.zip
                           (published as a GitHub Release)
 ```
 
@@ -263,7 +266,7 @@ patterns/
 ├── owasp2json.py            # Pull and parse OWASP CRS into a JSON intermediate
 ├── patterns/                # The compiler: python3 -m patterns
 │   ├── ir.py                #   load and validate the intermediate representation
-│   ├── backends/            #   one module per target: nginx, apache, traefik, haproxy
+│   ├── backends/            #   one module per target: nginx, apache, traefik, haproxy, envoy
 │   ├── cli.py               #   list, validate, build
 │   └── corpus.py            #   the traffic every backend is measured against
 ├── schema/                  # The JSON Schema of owasp_rules.json
@@ -274,7 +277,8 @@ patterns/
 │   ├── nginx/
 │   ├── apache/
 │   ├── traefik/
-│   └── haproxy/
+│   ├── haproxy/
+│   └── envoy/
 ├── docs/                    # VitePress documentation site
 ├── tests/                   # Validation tests for each backend
 └── .github/workflows/       # Daily build + release automation
@@ -352,7 +356,7 @@ The default list blocks SEO crawlers, AI training bots, and known scanners, and 
 |----------|----------|---------|
 | [`update_patterns.yml`](.github/workflows/update_patterns.yml) | Daily + manual | Re-fetch CRS, regenerate every backend, publish a release |
 | [`test_nginx.yml`](.github/workflows/test_nginx.yml) | On PR | Validate generated Nginx rules against a live container |
-| [`test_conformance.yml`](.github/workflows/test_conformance.yml) | On PR | Run the generated Apache, HAProxy and Traefik files in the real servers, and send them the corpus |
+| [`test_conformance.yml`](.github/workflows/test_conformance.yml) | On PR | Run the generated Apache, HAProxy, Traefik and Envoy files in the real servers, and send them the corpus |
 | [`test_ir.yml`](.github/workflows/test_ir.yml) | On PR | The IR, the backends, the coverage matrix, the corpus, the releases and the diff |
 | [`docs.yml`](.github/workflows/docs.yml) | On `docs/` change | Build and deploy the VitePress docs to GitHub Pages |
 
@@ -363,7 +367,7 @@ All workflows run on **GitHub-hosted runners** (`ubuntu-latest`).
 The full documentation lives at **[fabriziosalmi.github.io/patterns](https://fabriziosalmi.github.io/patterns/)** &mdash; built with [VitePress](https://vitepress.dev/) and deployed automatically.
 
 - [Getting Started](https://fabriziosalmi.github.io/patterns/getting-started)
-- [Nginx](https://fabriziosalmi.github.io/patterns/nginx) &middot; [Apache](https://fabriziosalmi.github.io/patterns/apache) &middot; [Traefik](https://fabriziosalmi.github.io/patterns/traefik) &middot; [HAProxy](https://fabriziosalmi.github.io/patterns/haproxy)
+- [Nginx](https://fabriziosalmi.github.io/patterns/nginx) &middot; [Apache](https://fabriziosalmi.github.io/patterns/apache) &middot; [Traefik](https://fabriziosalmi.github.io/patterns/traefik) &middot; [HAProxy](https://fabriziosalmi.github.io/patterns/haproxy) &middot; [Envoy](https://fabriziosalmi.github.io/patterns/envoy)
 - [Bad Bot Detection](https://fabriziosalmi.github.io/patterns/badbots)
 - [API & Scripts Reference](https://fabriziosalmi.github.io/patterns/api)
 
@@ -398,7 +402,7 @@ breakdown and [`LICENSES/`](LICENSES/) for the required license texts.
 
 - [OWASP Core Rule Set](https://github.com/coreruleset/coreruleset)
 - [ModSecurity](https://modsecurity.org/)
-- [Nginx](https://nginx.org/) &middot; [Apache HTTPD](https://httpd.apache.org/) &middot; [Traefik](https://traefik.io/) &middot; [HAProxy](https://www.haproxy.org/)
+- [Nginx](https://nginx.org/) &middot; [Apache HTTPD](https://httpd.apache.org/) &middot; [Traefik](https://traefik.io/) &middot; [HAProxy](https://www.haproxy.org/) &middot; [Envoy](https://www.envoyproxy.io/)
 - Bad-bot &amp; referrer-spam sources &mdash; [Crawler-Detect](https://github.com/JayBizzle/Crawler-Detect), [nginx-ultimate-bad-bot-blocker](https://github.com/mitchellkrogza/nginx-ultimate-bad-bot-blocker), [referrer-spam-blacklist](https://github.com/matomo-org/referrer-spam-blacklist)
 
 ---

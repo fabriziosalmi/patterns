@@ -162,4 +162,4 @@ def get(name: str) -> Backend:
 
 
 # Importing a module registers its backend. The order is the order `--all` builds in.
-from patterns.backends import nginx, apache, traefik, haproxy  # noqa: E402,F401
+from patterns.backends import nginx, apache, traefik, haproxy, envoy  # noqa: E402,F401

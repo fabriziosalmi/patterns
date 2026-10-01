@@ -485,6 +485,92 @@ check("quoting and reading a quoted argument are inverses",
 check("and what is written for a backslash is two, as Apache reads two as one",
       modsecurity_quote("a\\b"), "a\\\\b")
 
+print("what the Envoy backend writes")
+import yaml  # noqa: E402
+from patterns.backends import envoy as envoy_backend  # noqa: E402
+from patterns.backends._common import yaml_string  # noqa: E402
+
+envoy_files = compiled["envoy"].files
+rbac = yaml.safe_load(envoy_files["waf-rbac.yaml"])
+envoy_regexes = [m.get("header", m.get("url_path"))
+                 for p in rbac[0]["typed_config"]["rules"]["policies"].values()
+                 for m in p["permissions"][0]["or_rules"]["rules"]]
+check("the filter is YAML, one item of http_filters, a deny, of the type Envoy has",
+      (len(rbac), rbac[0]["name"], rbac[0]["typed_config"]["rules"]["action"], rbac[0]["typed_config"]["@type"]),
+      (1, "waf", "DENY", "type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC"))
+check("it holds what the matrix says was written", len(envoy_regexes), written("envoy"))
+envoy_whole = [(m.get("string_match") or m["path"])["safe_regex"]["regex"] for m in envoy_regexes]
+check("every expression is between two `.*` that are dot-all and nothing else is: Envoy matches the whole value",
+      [r for r in envoy_whole if not (r.startswith("(?s:.*)") and r.endswith("(?s:.*)"))], [])
+check("and each is an expression the rule has, with the case flag the rule asks for and no other change",
+      sorted(set(r for r in envoy_whole
+                 if not any(r in (envoy_backend.whole(d.pattern, False), envoy_backend.whole(d.pattern, True))
+                            for d in compiled["envoy"].decisions if d.emitted))), [])
+check("runtime.yaml raises the limit on the size of a compiled expression, which Envoy applies at 100",
+      yaml.safe_load(envoy_files["runtime.yaml"]),
+      {"layered_runtime": {"layers": [{"name": "waf", "static_layer": {"re2": {"max_program_size": {
+          "error_level": envoy_backend.MAX_PROGRAM_SIZE, "warn_level": envoy_backend.MAX_PROGRAM_SIZE}}}}]}})
+
+import re as _re  # noqa: E402
+check("and not lower than what the largest expression of CRS needs, measured in Envoy (it needs 100 by default)",
+      envoy_backend.MAX_PROGRAM_SIZE >= 10 * envoy_backend.MEASURED_PROGRAM_SIZE > 100, True)
+check("the wrapper finds an expression anywhere in a value: `(?s:.*)` is how a match of the whole value is a search",
+      (bool(_re.fullmatch(envoy_backend.whole("union"), "/a?q=union+select")),
+       bool(_re.fullmatch("union", "/a?q=union+select"))), (True, False))
+check("and keeps the meaning of the `.` of the rule: it does not match a line break, as in PCRE",
+      (bool(_re.fullmatch(envoy_backend.whole("a.b"), "x a\nb y")), bool(_re.fullmatch(envoy_backend.whole("a.b"), "x a-b y"))),
+      (False, True))
+check("a rule that lowercases is matched with case ignored, as nginx writes `~*`",
+      bool(_re.fullmatch(envoy_backend.whole("union", True), "/a?q=UNION+select")), True)
+check("an anchor stays an anchor: `^a` finds a value that starts with it, not one that has it later",
+      (bool(_re.fullmatch(envoy_backend.whole("^a"), "ab")), bool(_re.fullmatch(envoy_backend.whole("^a"), "ba"))),
+      (True, False))
+
+
+def envoy_decision(argument="zqxjk", name="rx", negated=False, **extra):
+    """What the Envoy backend does with one rule made for the purpose."""
+    record = rule(operator={"name": name, "negated": negated, "argument": argument},
+                  pattern=("!" if negated else "") + f"@{name} {argument}", **extra)
+    one = backends.get("envoy").compile(ir.IR(rules=[record]))
+    return (one.decisions[0].emitted, one.decisions[0].reason), one.files["waf-rbac.yaml"]
+
+
+check("envoy: a rule that is fine is written", envoy_decision()[0], (True, None))
+check("a negated operator is not", envoy_decision(negated=True)[0], (False, "operator-unsupported"))
+check("nor one that is not a regular expression", envoy_decision("1", "lt")[0], (False, "operator-unsupported"))
+check("nor a record that is not a rule", envoy_decision(directive="SecRuleUpdateTargetById")[0], (False, "not-a-rule"))
+check("nor an empty pattern", envoy_decision("")[0], (False, "empty-pattern"))
+check("nor an expression RE2 does not have: a lookahead", envoy_decision("zq(?=xjk)")[0], (False, "invalid-regex"))
+check("nor a line break in one", envoy_decision("zq\nxjk")[0], (False, "invalid-regex"))
+check("nor one on a component Envoy has no matcher for", envoy_decision(location="Cookie")[0],
+      (False, "location-unsupported"))
+check("nor one that does not refuse", envoy_decision(action="pass")[0], (False, "not-blocking"))
+check("nor one below `high`: a deny cannot only record", envoy_decision(severity="medium")[0],
+      (False, "severity-below-blocking"))
+check("nor one an ordinary request matches", envoy_decision("Googlebot", location="User-Agent")[0],
+      (False, "matches-benign-traffic"))
+check("nor one that is part of a chain, the head or a link",
+      (envoy_decision(chain={"role": "head", "head": "1", "position": 0})[0],
+       envoy_decision(chain={"role": "link", "head": "1", "position": 1})[0]),
+      ((False, "chain-unsupported"), (False, "chain-unsupported")))
+check("a rule on the path alone is a url_path permission, and one on the query string is on :path",
+      ("url_path:" in envoy_decision(location="Request-Filename")[1], "name: ':path'" in envoy_decision()[1]), (True, True))
+check("a User-Agent rule is on that header and a Host rule on :authority",
+      ("name: 'user-agent'" in envoy_decision(location="User-Agent")[1],
+       "name: ':authority'" in envoy_decision(location="Host")[1]), (True, True))
+check("an expression with quotes and backslashes is read back as it was written, by a YAML parser",
+      yaml.safe_load(envoy_decision(r"say '\"hi\"' \\ \d")[1])[0]["typed_config"]["rules"]["policies"]["waf_path"]
+      ["permissions"][0]["or_rules"]["rules"][0]["header"]["string_match"]["safe_regex"]["regex"],
+      envoy_backend.whole(modsecurity_unquote(r"say '\"hi\"' \\ \d")))
+awkward = [r"\d+\.\w", "it's", 'say "hi"', "back\\slash'quote", "#hash", ": colon", "- dash", " lead",
+           "trail ", "tab\there", "line\nbreak", "\x00nul", "\x7fdel", "é日本語😀", "\u2028sep", "", "'", "yes", "null"]
+check("YAML: every awkward string is read back as it was written",
+      [v for v in awkward if yaml.safe_load("k: " + yaml_string(v))["k"] != v], [])
+check("and one that can be single-quoted is, so a backslash is a backslash", yaml_string(r"\d+"), r"'\d+'")
+check("an empty filter is still a filter that refuses nothing",
+      yaml.safe_load(backends.get("envoy").compile(ir.IR(rules=[])).files["waf-rbac.yaml"])[0]
+      ["typed_config"]["rules"]["policies"], {})
+
 print("what the HAProxy backend writes")
 haproxy_records = [(d, R.rules[d.index]) for d in compiled["haproxy"].decisions if d.emitted]
 check("haproxy writes only @rx, not negated, that refuses and is `high`",
@@ -588,7 +674,8 @@ check("what each backend declares it can express is what is shown above and noth
       {"nginx": ("pcre", ["pm", "pmFromFile", "rx"], ["lowercase"], True),
        "apache": ("pcre", ["rx"], ["lowercase"], True),
        "traefik": ("re2", ["rx"], [], True),
-       "haproxy": ("pcre", ["rx"], ["lowercase"], True)})
+       "haproxy": ("pcre", ["rx"], ["lowercase"], True),
+       "envoy": ("re2", ["rx"], ["lowercase"], True)})
 check("every location a backend wrote a regular expression on is one it declares",
       {n: sorted({d.location for d in compiled[n].decisions if d.emitted and d.pattern}
                  - set(backends.get(n).capabilities.locations)) for n in compiled},

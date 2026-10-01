@@ -132,8 +132,9 @@ check("the note says which entry and who, one line each", badbots.left_out_note(
 check("and in the comment syntax of the file", badbots.left_out_note(left[:1], "# ").startswith("# Left out"), True)
 
 print("the four lists, as written")
-FILES = {"nginx": "bots.conf", "apache": "bots.conf", "traefik": "bots.toml", "haproxy": "bots.acl"}
-for fmt in ("nginx", "apache", "traefik", "haproxy"):
+FILES = {"nginx": "bots.conf", "apache": "bots.conf", "traefik": "bots.toml", "haproxy": "bots.acl",
+         "envoy": "bots-rbac.yaml"}
+for fmt in ("nginx", "apache", "traefik", "haproxy", "envoy"):
     with tempfile.TemporaryDirectory() as tmp:
         for name in badbots.OUTPUT_DIRS:
             badbots.OUTPUT_DIRS[name] = tmp
@@ -213,6 +214,40 @@ check("no entry of the committed file is a line of configuration",
       [l for l in entries["haproxy"] if l.startswith(("acl ", "http-request "))], [])
 check("and none has a space at either end that HAProxy would drop",
       [l for l in entries["haproxy"] if l != l.strip() and not l.rstrip().endswith("\\")], [])
+
+print("Envoy: a second RBAC filter, an expression to a permission")
+import yaml  # noqa: E402
+
+
+def envoy_written(bots, left=()):
+    """What badbots writes to bots-rbac.yaml."""
+    with tempfile.TemporaryDirectory() as tmp:
+        badbots.OUTPUT_DIRS["envoy"] = tmp
+        badbots.generate_envoy_conf(bots, left)
+        return (Path(tmp) / "bots-rbac.yaml").read_text()
+
+
+envoy = envoy_written(["AhrefsBot", r"008\/", 'say "hi"', "it's", "zq(?=xjk)", "Yandex(?!Search)"])
+filters = yaml.safe_load(envoy)
+rules = filters[0]["typed_config"]["rules"]["policies"]["waf_bots_user_agent"]["permissions"][0]["or_rules"]["rules"]
+check("it is one filter named waf_bots, a deny, with a policy on the User-Agent", (len(filters), filters[0]["name"]),
+      (1, "waf_bots"))
+check("an entry is a permission on the header, matched with case ignored and as a whole value",
+      [r["header"]["string_match"]["safe_regex"]["regex"] for r in rules],
+      ["(?s:.*)(?i:AhrefsBot)(?s:.*)", r"(?s:.*)(?i:008\/)(?s:.*)", '(?s:.*)(?i:say "hi")(?s:.*)',
+       "(?s:.*)(?i:it's)(?s:.*)"])
+check("an entry RE2 cannot compile is left out, and said", "# Not written: zq(?=xjk)" in envoy
+      and "# Not written: Yandex(?!Search)" in envoy, True)
+check("every permission is of the header it says", {r["header"]["name"] for r in rules}, {"user-agent"})
+envoy_committed = yaml.safe_load((REPO_ROOT / "waf_patterns" / "envoy" / "bots-rbac.yaml").read_text())
+envoy_entries = [r["header"]["string_match"]["safe_regex"]["regex"][len("(?s:.*)(?i:"):-len(")(?s:.*)")]
+                 for r in envoy_committed[0]["typed_config"]["rules"]["policies"]["waf_bots_user_agent"]
+                 ["permissions"][0]["or_rules"]["rules"]]
+check("the committed list is there, with its entries", len(envoy_entries) > 1000, True)
+check("and no entry of it refuses a client a site wants",
+      sorted((e, badbots.matching_client(e, WANTED)) for e in envoy_entries if badbots.matching_client(e, WANTED)), [])
+check("it still refuses the bots it is made of", [b for b in ("AhrefsBot", "SemrushBot", "MJ12bot") if b not in envoy_entries], [])
+check("and says what it left out", (REPO_ROOT / "waf_patterns" / "envoy" / "bots-rbac.yaml").read_text().count("# Left out") > 5, True)
 
 print("the check real servers are held to")
 

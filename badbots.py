@@ -12,6 +12,7 @@ from tqdm import tqdm  # Import tqdm for progress bar
 from patterns import corpus, dialects
 from patterns.backends._common import haproxy_pattern, modsecurity_quote, toml_string
 from patterns.backends.apache import BOT_ID_OFFSET
+from patterns.backends.envoy import matcher as envoy_matcher, rbac_filter, whole as envoy_whole
 from patterns.backends.traefik import PLUGIN
 
 # Logging setup
@@ -22,7 +23,8 @@ OUTPUT_DIRS = {
     "nginx": "waf_patterns/nginx/",
     "apache": "waf_patterns/apache/",
     "traefik": "waf_patterns/traefik/",
-    "haproxy": "waf_patterns/haproxy/"
+    "haproxy": "waf_patterns/haproxy/",
+    "envoy": "waf_patterns/envoy/"
 }
 
 # Updated list of bot list sources
@@ -302,6 +304,32 @@ def generate_haproxy_conf(bots, left_out=()):
     write_to_file(path, content)
 
 
+def generate_envoy_conf(bots, left_out=()):
+    """
+    Generate Envoy configuration for blocking bots.
+
+    `bots-rbac.yaml` is a second RBAC filter, named `waf_bots`, with a permission on the
+    User-Agent for each entry, matched with case ignored. Envoy matches an expression
+    against the whole value, so each is put between two `.*`; and RE2 has no lookahead,
+    so an entry that uses one is left out, and said. It does not need the runtime layer
+    of the rules: an entry is a small expression.
+    """
+    path = Path(OUTPUT_DIRS['envoy'], "bots-rbac.yaml")
+    content = ("# Envoy WAF - Bad Bot Blocker\n"
+               "# One item of `http_filters`, before `envoy.filters.http.router`: it refuses a request\n"
+               "# whose User-Agent matches an entry with a 403.\n") + left_out_note(left_out)
+    permissions = []
+    for bot in bots:
+        problem = dialects.check("re2", bot)
+        if problem:
+            content += f"# Not written: {bot} {problem}\n"
+            logging.warning(f"Envoy: leaving out {bot!r}: {problem}")
+        else:
+            permissions.append(("bad bot", envoy_matcher("header", "user-agent", envoy_whole(bot, True),
+                                                         "              ")))
+    write_to_file(path, content + "\n" + rbac_filter("waf_bots", {"waf_bots_user_agent": permissions}))
+
+
 if __name__ == "__main__":
     # Ensure output directories exist
     for output_dir in OUTPUT_DIRS.values():
@@ -319,5 +347,6 @@ if __name__ == "__main__":
     generate_apache_conf(bots, left_out)
     generate_traefik_conf(bots, left_out)
     generate_haproxy_conf(bots, left_out)
+    generate_envoy_conf(bots, left_out)
 
     logging.info("[✔] Bot blocking configurations generated for all platforms.")

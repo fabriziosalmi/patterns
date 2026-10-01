@@ -77,7 +77,9 @@ def tree(root):
     return {str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
 
 
-TARGETS = ["nginx", "apache", "traefik", "haproxy"]
+TARGETS = ["nginx", "apache", "traefik", "haproxy", "envoy"]
+# The targets that have a json2<target>.py, kept for one release. A target added since has none.
+LEGACY = ["nginx", "apache", "traefik", "haproxy"]
 COMPARABLE = sys.version_info >= (3, 11)
 if not COMPARABLE:
     print(f"\nPython {sys.version_info[0]}.{sys.version_info[1]}: the committed output is built "
@@ -87,7 +89,7 @@ tmp = Path(tempfile.mkdtemp(prefix="patterns-cli-"))
 try:
     print("\nlist")
     code, out, _ = patterns("list")
-    check("lists the four targets, in build order",
+    check("lists the targets, in build order",
           [line.split()[0] for line in out.splitlines()], TARGETS)
     check("list succeeds", code, 0)
 
@@ -134,7 +136,7 @@ try:
     if COMPARABLE:
         code, out, _ = patterns("build", "--all", "--check")
         check("build --all --check passes on the committed waf_patterns/", (code, out.strip()),
-              (0, "nginx, apache, traefik, haproxy: output matches owasp_rules.json"))
+              (0, "nginx, apache, traefik, haproxy, envoy: output matches owasp_rules.json"))
         committed = tree(REPO_ROOT / "waf_patterns")
         check("coverage.json is the file committed",
               (out_a / "coverage.json").read_bytes() == committed["coverage.json"], True)
@@ -153,7 +155,8 @@ try:
     # (their regular expressions are the ones #50 fixed, and their header tells people to
     # include them in a server block, where a `map` is not allowed). A directory holds what
     # the backend renders, the bad-bot list badbots.py writes, and a README.
-    BOTS = {"nginx": "bots.conf", "apache": "bots.conf", "traefik": "bots.toml", "haproxy": "bots.acl"}
+    BOTS = {"nginx": "bots.conf", "apache": "bots.conf", "traefik": "bots.toml", "haproxy": "bots.acl",
+            "envoy": "bots-rbac.yaml"}
     for target in TARGETS:
         rendered = {p.relative_to(out_a / target).as_posix() for p in (out_a / target).rglob("*") if p.is_file()}
         present = {p.relative_to(REPO_ROOT / "waf_patterns" / target).as_posix()
@@ -222,8 +225,8 @@ try:
         message = str(e)
     check("an unknown name says which ones are known", all(t in message for t in TARGETS), True)
 
-    print("the scripts that came before")
-    for target in TARGETS:
+    print("the scripts that came before: one for each target there was, and none for a target added after")
+    for target in LEGACY:
         legacy = tmp / "legacy" / target
         result = subprocess.run(
             [sys.executable, "-W", "ignore", f"json2{target}.py"], cwd=REPO_ROOT,
