@@ -227,9 +227,21 @@ print("the workflow")
 workflow = (REPO_ROOT / ".github" / "workflows" / "update_patterns.yml").read_text()
 check("it never deletes a release", "release delete" in workflow, False)
 check("nor a tag", bool(re.search(r"git push[^\n]*--delete|git tag -d|tag -d", workflow)), False)
-check("and never publishes under the tag `latest`", bool(re.search(r"tag_name:\s*latest", workflow)), False)
+check("and never publishes under the tag `latest`",
+      bool(re.search(r"tag_name:\s*latest|release create\s+\"?latest\"?(\s|$)", workflow)), False)
 check("it publishes under the tag the package command chose",
-      "tag_name: ${{ steps.package.outputs.tag }}" in workflow, True)
+      bool(re.search(r"^\s+TAG: \$\{\{ steps\.package\.outputs\.tag \}\}$", workflow, re.M))
+      and 'gh release create "$TAG"' in workflow, True)
+steps = {m.start(): m.group(0) for m in re.finditer(
+    r"release create \"\$TAG\" --draft|diff expected-assets\.txt uploaded-assets\.txt|-F draft=false", workflow)}
+check("it makes the release as a draft, checks that it holds every file, and only then publishes it: "
+      "GitHub's immutable releases cannot be given a file once published",
+      [text.split()[0] if text.startswith("release") else text.split()[0] for _, text in sorted(steps.items())],
+      ["release", "diff", "-F"])
+check("and does not publish if the draft is not complete",
+      bool(re.search(r"if ! diff expected-assets.txt uploaded-assets.txt; then.*?exit 1\s+fi", workflow, re.S)), True)
+check("and marks it the newest, which is what releases/latest/download follows",
+      "make_latest=true" in workflow, True)
 check("and signs with the workflow's own identity",
       "certificate-identity" in workflow and "workflow_ref" in workflow, True)
 docs = (REPO_ROOT / "docs" / "verify.md").read_text()
