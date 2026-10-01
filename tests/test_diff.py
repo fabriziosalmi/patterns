@@ -64,7 +64,8 @@ def derive(edit=None, ref="v9.9.9"):
     if edit:
         rules = edit(rules) or rules
     return ir.IR(rules=rules, crs_ref=ref, schema_version=OLD.schema_version,
-                 score_defaults=OLD.score_defaults, provenance=OLD.provenance)
+                 score_defaults=OLD.score_defaults, provenance=OLD.provenance,
+                 data_files=copy.deepcopy(OLD.data_files))
 
 
 def find(rules, rule_id):
@@ -100,6 +101,45 @@ check("it says so in one line",
       diff.to_markdown(same), f"No rule changed since the previous release (CRS {OLD.crs_ref}).\n")
 check("the same two files give the same JSON",
       diff.to_json(same), diff.to_json(diff.compare(OLD, derive(ref=OLD.crs_ref), targets=False)))
+
+print("the phrase lists")
+FILE = sorted(OLD.data_files)[0]
+READERS = sorted(r["id"] for r in OLD.rules if r["operator"] and r["operator"]["name"] == "pmFromFile"
+                 and r["operator"]["argument"] == FILE)
+
+
+def with_phrases(change):
+    """The second version with one phrase list changed: the records are the same."""
+    new = derive(ref=OLD.crs_ref)
+    change(new.data_files)
+    return new
+
+
+nothing = diff.compare(OLD, derive(ref=OLD.crs_ref), targets=False)
+check("a phrase list that did not change is not reported",
+      (nothing["data_files"], nothing["summary"]["data_files_changed"]),
+      ({"added": [], "removed": [], "changed": []}, 0))
+grown = diff.compare(OLD, with_phrases(lambda d: d[FILE].extend(["zz-new-phrase-1", "zz-new-phrase-2"])), targets=False)
+check("a phrase added to a list is found, and says how many and which rules read the list",
+      grown["data_files"]["changed"], [{"name": FILE, "added": 2, "removed": 0, "rules": READERS}])
+check("though no rule changed", (grown["summary"]["added"], grown["summary"]["removed"], grown["summary"]["changed"]), (0, 0, 0))
+shrunk = diff.compare(OLD, with_phrases(lambda d: d[FILE].pop()), targets=False)
+check("one removed is found too", [(c["added"], c["removed"]) for c in shrunk["data_files"]["changed"]], [(0, 1)])
+check("a list that is new, and one that is gone",
+      (diff.compare(OLD, with_phrases(lambda d: d.update({"zz.data": ["a"]})), targets=False)["data_files"]["added"],
+       diff.compare(OLD, with_phrases(lambda d: d.pop(FILE)), targets=False)["data_files"]["removed"]),
+      (["zz.data"], [FILE]))
+check("the order of the phrases is not a change",
+      diff.compare(OLD, with_phrases(lambda d: d[FILE].reverse()), targets=False)["summary"]["data_files_changed"], 0)
+text = diff.to_markdown(grown)
+check("the Markdown says so, and it is not the one line for a release that changed nothing",
+      ("Phrase lists the rules read" in text and f"`{FILE}`: 2 added, 0 removed" in text
+       and not text.startswith("No rule changed")), True)
+check("and names the rules that read it", f"(read by {', '.join(READERS)})" in text, True)
+check("the JSON has it", '"data_files":' in diff.to_json(grown), True)
+legacy_old = ir.IR(rules=OLD.rules, crs_ref=OLD.crs_ref, schema_version=1)
+legacy = diff.compare(legacy_old, derive(ref=OLD.crs_ref), targets=False)
+check("a version that predates the phrase lists is compared on what both have", "data_files" in legacy, False)
 
 print("added and removed")
 NEW_ID = "8000001"
@@ -252,8 +292,8 @@ with tempfile.TemporaryDirectory() as tmp:
     check("the command succeeds and prints the summary", (run.returncode, "1 removed" in run.stdout), (0, True))
     written = json.loads(out.read_text())
     check("changes.json has the documented keys",
-          sorted(written), ["added", "changed", "compared_on", "format", "from", "removed",
-                            "summary", "targets", "to"])
+          sorted(written), ["added", "changed", "compared_on", "data_files", "format", "from",
+                            "removed", "summary", "targets", "to"])
     check("and the version of its own format", written["format"], diff.FORMAT)
     check("--no-targets leaves the targets out", written["targets"], {})
     check("one record to a line",

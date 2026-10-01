@@ -30,7 +30,7 @@ CONNECTION_POOL_SIZE = 30   # More connections for faster parallel downloads
 # The version of the format owasp_rules.json is written in: schema/ir.schema.json.
 # It changes whenever that file does, and tests/test_ir_schema.py fails if the
 # schema moves without it.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 # --- Custom Exceptions ---
@@ -233,6 +233,80 @@ def fetch_rule_files(session: requests.Session, ref: str) -> List[Dict[str, str]
     except GitHubRequestError as e:
         logger.error(f"Failed to fetch rule files from {rules_url}: {e}")
         return []  # Return an empty list on failure
+
+
+def fetch_data_file_index(session: requests.Session, ref: str) -> Dict[str, str]:
+    """
+    Lists the `.data` files next to the rules at a ref: the phrase lists `@pmFromFile`
+    names. They are not rules, and are fetched only if a rule names them.
+
+    Returns:
+        The blob SHA of each, by file name. Empty on failure.
+    """
+    ref_name = ref.split("/")[-1] if "/" in ref else ref
+    rules_url = f"{OWASP_CRS_BASE_URL}?ref={ref_name}"
+    try:
+        return {f["name"]: f["sha"] for f in fetch_with_retries(session, rules_url).json()
+                if f["name"].endswith(".data")}
+    except GitHubRequestError as e:
+        logger.error(f"Failed to list the data files from {rules_url}: {e}")
+        return {}
+
+
+def parse_data_file(text: str) -> List[str]:
+    """
+    Reads the phrases of a CRS `.data` file, the way `@pmFromFile` does.
+
+    One phrase to a line. A line that is empty, or that starts with `#`, is not a phrase;
+    blank space at either end of a line is not part of one.
+
+    Args:
+        text: The file.
+
+    Returns:
+        The phrases, in file order, each once.
+    """
+    phrases = (line.strip() for line in text.splitlines())
+    return list(dict.fromkeys(p for p in phrases if p and not p.startswith("#")))
+
+
+def referenced_data_files(rules: List[Dict[str, object]]) -> List[str]:
+    """The names of the `.data` files the rules' `@pmFromFile` operators read, sorted."""
+    return sorted({r["operator"]["argument"] for r in rules
+                   if r.get("operator") and r["operator"]["name"] == "pmFromFile"})
+
+
+def fetch_data_files(session: requests.Session, ref: str,
+                     names: List[str]) -> Optional[Dict[str, List[str]]]:
+    """
+    Fetches the phrases of the named `.data` files at a ref.
+
+    A phrase list that cannot be read, or whose content is not what GitHub says it is,
+    is an error and not a gap: a rule that names it would be written without the words
+    it exists to match, or not at all, and the release would not say so.
+
+    Returns:
+        The phrases of each file, by name in sorted order; None if one could not be read.
+    """
+    if not names:
+        return {}
+    index = fetch_data_file_index(session, ref)
+    found: Dict[str, List[str]] = {}
+    for name in sorted(names):
+        sha = index.get(name)
+        if sha is None:
+            logger.error(f"A rule reads {name} and {ref} has no such data file.")
+            return None
+        blob = fetch_github_blob(session, sha)
+        if not blob or not verify_blob_sha(sha, blob):
+            logger.error(f"Could not read {name} at {ref}, or it is not the file GitHub lists.")
+            return None
+        try:
+            found[name] = parse_data_file(base64.b64decode(blob).decode("utf-8"))
+        except UnicodeDecodeError as e:
+            logger.error(f"{name} is not UTF-8: {e}")
+            return None
+    return found
 
 
 def fetch_github_blob(session: requests.Session, sha: str) -> str:
@@ -947,6 +1021,7 @@ def save_as_json(
     output_file: str,
     provenance: Optional[Dict[str, str]] = None,
     score_defaults: Optional[Dict[str, int]] = None,
+    data_files: Optional[Dict[str, List[str]]] = None,
 ) -> bool:
     """Saves the extracted rules to a JSON file (atomically).
 
@@ -966,6 +1041,7 @@ def save_as_json(
                 "schema_version": SCHEMA_VERSION,
                 "_provenance": provenance,
                 "score_defaults": score_defaults or {},
+                "data_files": data_files or {},
                 "rules": rules,
             }
         else:
@@ -1013,11 +1089,17 @@ def main():
     # 3. Fetch and process the rules (in parallel).
     rules, score_defaults = fetch_owasp_rules(session, rule_files)
 
+    # 3b. The phrase lists the rules read with @pmFromFile.
+    data_files = fetch_data_files(session, latest_ref, referenced_data_files(rules))
+    if data_files is None:
+        return 1
+
     # 4. Save the rules to a JSON file (unless it's a dry run).
     ref_name = latest_ref.split("/")[-1] if latest_ref else args.ref
     if not args.dry_run:
         if rules:
-            if save_as_json(rules, args.output, build_provenance(ref_name), score_defaults):
+            if save_as_json(rules, args.output, build_provenance(ref_name), score_defaults,
+                            data_files):
                 logger.info(f"Saved {len(rules)} rules from {ref_name} to {args.output}.")
             else:
                 logger.error("Failed to save rules to JSON.") # if the save fail

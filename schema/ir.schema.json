@@ -4,11 +4,11 @@
   "description": "owasp_rules.json: the OWASP Core Rule Set as owasp2json.py reads it, and what every converter builds on. Documented in docs/ir.md. Any change to this file bumps schema_version, and tests/test_ir_schema.py fails if it does not.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "_provenance", "score_defaults", "rules"],
+  "required": ["schema_version", "_provenance", "score_defaults", "data_files", "rules"],
   "properties": {
     "schema_version": {
       "description": "The version of this schema the document was written for.",
-      "const": 1
+      "const": 2
     },
     "_provenance": {
       "description": "Where the rules come from. The document is a derived work of the CRS (Apache-2.0); see THIRD_PARTY_NOTICES.md.",
@@ -36,6 +36,15 @@
         "error": { "type": "integer", "minimum": 0 },
         "warning": { "type": "integer", "minimum": 0 },
         "notice": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "data_files": {
+      "description": "The phrase lists that `@pmFromFile` rules read, by file name, as the CRS ships them in rules/*.data: the phrases of each, in file order, without comments or blank lines. Only the files a rule names are here, and each file a rule names is.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string", "minLength": 1 },
+        "uniqueItems": true
       }
     },
     "rules": {

@@ -27,13 +27,17 @@ This directory contains Nginx WAF configuration files generated from OWASP rules
 
 ## What this blocks
 
-Read the top of `waf_rules.conf`: it says what is enforced.
+Only a rule of severity `high` refuses a request, with a 403. The lower severities are
+recorded in the `$waf_*` variables, which hold `"<severity>:<category>"` on a match and
+`""` otherwise, and are there for `log_format`. The header of `waf_maps.conf` lists the
+rules that were left out and why.
 
-Rules carry a severity, and only `high` blocks. The Core Rule Set
-extraction does not currently produce severities, so on a default build
-nothing is blocked and matches are only recorded in the `$waf_*`
-variables. `waf_rules.conf` carries a ready-to-uncomment blocking
-directive, and the measured trade-off of turning it on.
+A `map` matches one regular expression against one raw request variable, and nothing
+else: it does not decode, it does not read the request body and it does not add up a
+score. `@pm` and `@pmFromFile` are written as case-insensitive alternations of their
+phrases, and the request path is matched on `$uri`, which nginx has decoded and
+normalised. See https://fabriziosalmi.github.io/patterns/nginx for what it catches and
+what it does not.
 
 Log the variables against your own traffic before enforcing anything.
 

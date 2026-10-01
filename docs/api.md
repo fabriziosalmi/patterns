@@ -224,13 +224,14 @@ The defaults point at system directories (`/etc/...`). Run the import scripts as
 
 ### `owasp_rules.json`
 
-A JSON document with a `schema_version`, the provenance of the rules, the anomaly score defaults and a `rules` list. Each record says which variables it is matched against, which operator it applies, in which phase, whether it is part of a chain and what score it adds.
+A JSON document with a `schema_version`, the provenance of the rules, the anomaly score defaults, the phrase lists the `@pmFromFile` rules read (`data_files`) and a `rules` list. Each record says which variables it is matched against, which operator it applies, in which phase, whether it is part of a chain and what score it adds.
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "_provenance": { "source_ref": "v4.29.0", "license": "Apache-2.0" },
   "score_defaults": { "critical": 5, "error": 4, "warning": 3, "notice": 2 },
+  "data_files": { "restricted-files.data": [".htaccess", ".env"] },
   "rules": [
     {
       "id": "941110",
@@ -263,9 +264,10 @@ The converters currently read two older fields, `pattern` and `location`, and va
 | `format` | The version of this document's shape. |
 | `from`, `to` | `source_ref` (the CRS tag), `schema_version` and `records` of each file. |
 | `compared_on` | The fields a rule was compared on: the IR's, or, if either file predates the IR, the ones both have (then `targets` is absent). |
-| `summary` | `added`, `removed`, `changed`, `unchanged`, `source_ref_changed`. |
+| `summary` | `added`, `removed`, `changed`, `unchanged`, `source_ref_changed` and `data_files_changed`. |
 | `added`, `removed` | One record per rule: `id`, `label`, `category`, `rule` (the operator and argument) and `written_by`, the targets that write it. |
 | `changed` | One record per rule: `id`, `label`, `category` and `fields`, each changed field with its `from` and `to`. |
+| `data_files` | The phrase lists the `@pmFromFile` rules read (absent if either file predates schema 2): the files `added` and `removed`, and for each `changed` one how many phrases were added and removed and which rules read it. A list can change when no rule does, and what a target writes for its rules then changes with it. |
 | `targets` | Per target: `written` (`from`, `to`), `output_changed` (the rules that changed and that the target writes both times: its output changes), and `status_changed` (the rules whose verdict changed, with `from` and `to`). |
 
 The two lists in `targets` are not the same event. A rule that changed and is written both times changes the target's output, which a person reviewing a release wants to know. A rule that a target started or stopped writing is a status change, and is the one to read first: `941100` on HAProxy: `approximate` to `dropped (invalid-regex)`.

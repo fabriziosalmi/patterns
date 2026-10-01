@@ -13,7 +13,7 @@ This guide explains how to wire the generated rules into an Nginx configuration.
 
 | File | Purpose | Where to include |
 |------|---------|------------------|
-| `waf_maps.conf` | One `map` for each request variable the rules can see: `$args`, `$request_uri`, `$http_user_agent`, `$http_host`, `$http_referer` and `$http_content_type`. Each sets a `$waf_*` variable to `"<severity>:<category>"` on a match, and to `""` otherwise | `http` block |
+| `waf_maps.conf` | One `map` for each request variable the rules can see: `$args`, `$request_uri`, `$uri`, `$http_user_agent`, `$http_host`, `$http_referer` and `$http_content_type`. Each sets a `$waf_*` variable to `"<severity>:<category>"` on a match, and to `""` otherwise | `http` block |
 | `waf_rules.conf` | For each of those variables, `if ($waf_… ~ "^high") { return 403; }` | `server` or `location` block |
 | `bots.conf` | `map $http_user_agent $bad_bot` for User-Agent filtering | `http` block |
 | `README.md` | Usage notes, in the archive | |
@@ -22,7 +22,7 @@ The header of `waf_maps.conf` lists the rules that were **left out** and why: th
 
 ## What it can and cannot do
 
-A `map` matches one regular expression against one raw request variable, and that is all. It does not apply the transformations CRS writes its patterns for (URL-decoding, case folding, ...), it cannot read the request body, and it does not add up an anomaly score. So it catches an attack written in clear far more often than the same attack percent-encoded. [What this catches](https://github.com/fabriziosalmi/patterns#what-this-catches) says how much, measured, and [Coverage](/coverage) says what the matrix does with each rule. Treat it as a useful first filter in front of an application, not as a WAF.
+A `map` matches one regular expression against one raw request variable, and that is all. It does not apply the transformations CRS writes its patterns for (URL-decoding, case folding, ...), it cannot read the request body, and it does not add up an anomaly score. So it catches an attack written in clear far more often than the same attack percent-encoded. Two things it does better than that: `@pm` and `@pmFromFile` (the scanner User-Agent list, the restricted-file list, the shell commands, ...) are written as case-insensitive alternations of their phrases, in as few keys as Nginx's parameter limit allows; and a rule on the request path is matched on `$uri`, which Nginx has already percent-decoded and normalised, so `/%2egit/config` is `/.git/config` to it. [What this catches](https://github.com/fabriziosalmi/patterns#what-this-catches) says how much, measured, and [Coverage](/coverage) says what the matrix does with each rule. Treat it as a useful first filter in front of an application, not as a WAF.
 
 ## Step 1 &mdash; Include the maps
 
@@ -133,6 +133,9 @@ UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrom
 curl -I -A "$UA" "https://example.com/?q=hello"                       # 200
 curl -I -A "$UA" "https://example.com/?id=1'+OR+'1'='1"               # 403
 curl -I -A "$UA" "https://example.com/?q=<script>alert(1)</script>"   # 403
+curl -I -A "$UA" "https://example.com/.env"                           # 403
+curl -I -A "$UA" "https://example.com/%2egit/config"                  # 403, `$uri` is decoded
+curl -I -A "sqlmap/1.8" "https://example.com/"                        # 403, a scanner's User-Agent
 ```
 
 Without `-A` the probe tells you nothing: `bots.conf` lists `curl`, so with `if ($bad_bot)` in place every request from `curl` is refused, the ordinary one too. The same payloads percent-encoded (`%3Cscript%3E`) are mostly **not** caught: that is the transformation chain Nginx cannot apply, and the reason the table in the README has two rows.

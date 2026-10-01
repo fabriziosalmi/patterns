@@ -5,8 +5,8 @@ from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
 
 from patterns.backends import Backend, Capabilities, Compiled, Decision, Target, register
-from patterns.backends._common import provenance_header
-from patterns.corpus import VARIABLE_FIELDS, first_ordinary_match
+from patterns.backends._common import operator_of, provenance_header
+from patterns.corpus import VARIABLE_FIELDS, first_ordinary_match, nginx_uri
 from patterns.dialects import python_equivalent
 from patterns.ir import IR
 
@@ -124,6 +124,10 @@ NGINX_MAX_PARAMETER = 4095
 
 # The request component each rule location is matched against.
 LOCATION_VARIABLES = {
+    # `$uri` is the path percent-decoded and normalised by nginx, which is the
+    # `t:urlDecodeUni`, `t:normalizePath` chain the rules on REQUEST_FILENAME declare.
+    "request-filename": "$uri",
+    "request-method": "$request_method",
     "request-uri": "$request_uri",
     "query-string": "$args",
     "user-agent": "$http_user_agent",
@@ -210,6 +214,8 @@ def fires_on_ordinary_traffic(pattern: str, variable: str,
         The `name` of the first matching benign request, or None if it matches
         none of them.
     """
+    if variable == "$uri":
+        return first_ordinary_match(pattern, "path", ignore_case, lambda entry: [nginx_uri(entry["path"])])
     field = VARIABLE_FIELDS.get(variable)
     if field is None:
         return None
@@ -241,8 +247,58 @@ def exclusion_report(not_blocking: int, too_long: int,
     return "".join(lines)
 
 
-def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest") -> Compiled:
+def phrase_alternations(phrases: List[str], limit: int = NGINX_MAX_PARAMETER) -> List[str]:
+    """
+    Writes a list of phrases as the regular expressions of map keys that fit nginx.
+
+    `@pm` and `@pmFromFile` are a case-insensitive substring match against a list, which is
+    an alternation of the phrases with each one escaped. One key for the lot is more than
+    nginx takes as a parameter (#22), and one key per phrase is thousands of keys, which
+    nginx tries one after the other for every request. So the phrases are packed into as few
+    keys as fit, each `(?:a|b|c)` and each at most `limit` bytes as it is written in the file.
+
+    Args:
+        phrases: The phrases, in the order they are to be tried.
+        limit: The most bytes a key may take, with its quotes and `~*`.
+
+    Returns:
+        The expressions, one for each key. Empty if there are no phrases. Raises ValueError
+        if one phrase alone cannot fit.
+    """
+    overhead = len('"~*(?:') + len(')"')
+    chunks: List[List[str]] = []
+    size = 0
+    for phrase in dict.fromkeys(phrases):
+        piece = re.escape(phrase)
+        cost = len(_escape_for_config(piece).encode("utf-8"))
+        if overhead + cost > limit:
+            raise ValueError(f"the phrase {phrase[:40]!r} does not fit in a key of {limit} bytes")
+        if not chunks or size + 1 + cost > limit:
+            chunks.append([])
+            size = overhead
+        size += cost + (1 if chunks[-1] else 0)
+        chunks[-1].append(piece)
+    return ["(?:" + "|".join(chunk) + ")" for chunk in chunks]
+
+
+def phrases_of(operator: Dict, data_files: Dict[str, List[str]]) -> Optional[List[str]]:
+    """
+    The phrases an `@pm` or `@pmFromFile` operator matches, or None if it is neither.
+
+    `@pm` takes its phrases from its argument, split on blank space. `@pmFromFile` takes
+    them from the file the argument names, which the IR carries (`data_files`).
+    """
+    if operator["negated"] or operator["name"] not in ("pm", "pmFromFile"):
+        return None
+    if operator["name"] == "pm":
+        return operator["argument"].split()
+    return data_files.get(operator["argument"].strip())
+
+
+def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest",
+                       data_files: Optional[Dict[str, List[str]]] = None) -> Compiled:
     """Builds the Nginx WAF configuration: maps, rules and a README."""
+    data_files = data_files or {}
 
     # source variable -> list of "key value" map entries
     entries_by_variable: Dict[str, List[str]] = defaultdict(list)
@@ -259,13 +315,32 @@ def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest") -> Compiled:
         pattern = rule["pattern"]
         severity = rule.get("severity", "medium").lower() # get severity
 
-        sanitized_pattern, why = explain_pattern(pattern)
-        if not sanitized_pattern:
-            decisions.append(Decision(index, False, *why))
-            continue  # Skip unsupported patterns
-        if not validate_regex(sanitized_pattern):
-            decisions.append(Decision(index, False, "invalid-regex", "Python's re does not compile it"))
-            continue  # Skip invalid patterns
+        # What the rule matches with: a regular expression, or a list of phrases
+        # written as the alternations that fit a key.
+        operator = operator_of(rule)
+        listed = phrases_of(operator, data_files)
+        if listed is not None:
+            if not listed:
+                decisions.append(Decision(index, False, "empty-pattern", "the phrase list has no phrases"))
+                continue
+            try:
+                patterns = phrase_alternations(listed)
+            except ValueError as e:
+                decisions.append(Decision(index, False, "parameter-too-long", str(e)))
+                continue
+            ignore_case = True  # @pm ignores case
+        else:
+            sanitized_pattern, why = explain_pattern(pattern)
+            if not sanitized_pattern:
+                if operator["name"] == "pmFromFile" and not operator["negated"]:
+                    why = ("operator-unsupported", "@pmFromFile (the IR has no such phrase list)")
+                decisions.append(Decision(index, False, *why))
+                continue  # Skip unsupported patterns
+            if not validate_regex(sanitized_pattern):
+                decisions.append(Decision(index, False, "invalid-regex", "Python's re does not compile it"))
+                continue  # Skip invalid patterns
+            patterns = [sanitized_pattern]
+            ignore_case = None  # decided below, from the rule
 
         variable = LOCATION_VARIABLES.get(location)
         if variable is None:
@@ -282,38 +357,43 @@ def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest") -> Compiled:
         # quote inside the pattern ends the token early: the CRS pattern
         # `charset\s*=\s*["\']?...` produced `unexpected "\'"` and the file
         # would not load.
-        ignore_case = is_case_insensitive(pattern, rule.get("transformations") or [])
+        if ignore_case is None:
+            ignore_case = is_case_insensitive(pattern, rule.get("transformations") or [])
 
         # Measured, not assumed: a rule that refuses ordinary traffic is not
-        # emitted, whatever its severity says.
-        ordinary = fires_on_ordinary_traffic(sanitized_pattern, variable, ignore_case)
+        # emitted, whatever its severity says. Each key is checked, and a rule is
+        # written whole or not at all.
+        ordinary = next((found for found in (fires_on_ordinary_traffic(p, variable, ignore_case)
+                                             for p in patterns) if found is not None), None)
         if ordinary is not None:
             excluded_as_noisy.append((rule_id, category, ordinary))
             decisions.append(Decision(index, False, "matches-benign-traffic", ordinary))
             continue
 
         prefix = "~*" if ignore_case else "~"
-        key = f'"{prefix}{_escape_for_config(sanitized_pattern)}"'
-        if len(key.encode("utf-8")) > NGINX_MAX_PARAMETER:
+        keys = [f'"{prefix}{_escape_for_config(p)}"' for p in patterns]
+        too_long = max(len(k.encode("utf-8")) for k in keys)
+        if too_long > NGINX_MAX_PARAMETER:
             # nginx refuses a single configuration parameter longer than 4096
             # characters ("too long parameter"), and one over-long pattern makes
             # the whole file unloadable. Verified against nginx 1.31.5: the
             # quoted token including `~*` may be at most 4096 characters.
             skipped_too_long += 1
             logger.warning(
-                f"Skipping rule {rule_id}: key is {len(key.encode('utf-8'))} "
+                f"Skipping rule {rule_id}: key is {too_long} "
                 f"bytes, over nginx's {NGINX_MAX_PARAMETER}-byte parameter limit"
             )
-            decisions.append(Decision(index, False, "parameter-too-long",
-                                      f"{len(key.encode('utf-8'))} bytes"))
+            decisions.append(Decision(index, False, "parameter-too-long", f"{too_long} bytes"))
             continue
 
         # The value carries the severity and the category, so an operator can
         # read $waf_<variable> in a log to see what matched.
         severities_seen.add(severity)
         value = f'"{severity}:{_sanitize_name(category)}"'
-        entries_by_variable[variable].append(f"  {key} {value};")
-        decisions.append(Decision(index, True, location=location, pattern=sanitized_pattern))
+        for key in keys:
+            entries_by_variable[variable].append(f"  {key} {value};")
+        decisions.append(Decision(index, True, location=location, pattern="|".join(patterns),
+                                  keys=len(keys)))
 
     if skipped_too_long:
         logger.warning(
@@ -440,12 +520,16 @@ def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest") -> Compiled:
     readme.append("   sudo nginx -t && sudo systemctl reload nginx\n")
     readme.append("   ```\n\n")
     readme.append("## What this blocks\n\n")
-    readme.append("Read the top of `waf_rules.conf`: it says what is enforced.\n\n")
-    readme.append("Rules carry a severity, and only `high` blocks. The Core Rule Set\n")
-    readme.append("extraction does not currently produce severities, so on a default build\n")
-    readme.append("nothing is blocked and matches are only recorded in the `$waf_*`\n")
-    readme.append("variables. `waf_rules.conf` carries a ready-to-uncomment blocking\n")
-    readme.append("directive, and the measured trade-off of turning it on.\n\n")
+    readme.append("Only a rule of severity `high` refuses a request, with a 403. The lower severities are\n")
+    readme.append("recorded in the `$waf_*` variables, which hold `\"<severity>:<category>\"` on a match and\n")
+    readme.append("`\"\"` otherwise, and are there for `log_format`. The header of `waf_maps.conf` lists the\n")
+    readme.append("rules that were left out and why.\n\n")
+    readme.append("A `map` matches one regular expression against one raw request variable, and nothing\n")
+    readme.append("else: it does not decode, it does not read the request body and it does not add up a\n")
+    readme.append("score. `@pm` and `@pmFromFile` are written as case-insensitive alternations of their\n")
+    readme.append("phrases, and the request path is matched on `$uri`, which nginx has decoded and\n")
+    readme.append("normalised. See https://fabriziosalmi.github.io/patterns/nginx for what it catches and\n")
+    readme.append("what it does not.\n\n")
     readme.append("Log the variables against your own traffic before enforcing anything.\n\n")
     readme.append("## Important Notes:\n\n")
     readme.append("* **Testing is Crucial:**  Thoroughly test your WAF configuration with a variety of requests (both legitimate and malicious) to ensure it's working correctly and not causing false positives.\n")
@@ -473,11 +557,13 @@ class Nginx(Backend):
     # the only transformation the output has is case, through the `~*` prefix.
     capabilities = Capabilities(
         dialect="pcre",
-        operators=frozenset({"rx"}),
+        operators=frozenset({"rx", "pm", "pmFromFile"}),
         transformations=frozenset({"lowercase"}),
         case_insensitive=True,
         locations={
             "request-uri": Target("$request_uri"),
+            "request-filename": Target("$uri"),
+            "request-method": Target("$request_method"),
             "query-string": Target(
                 "$args", "the query string only: arguments in the request body are not seen"),
             "user-agent": Target("$http_user_agent"),
@@ -489,4 +575,4 @@ class Nginx(Backend):
     )
 
     def compile(self, ir: IR) -> Compiled:
-        return generate_nginx_waf(ir.rules, ir.crs_ref)
+        return generate_nginx_waf(ir.rules, ir.crs_ref, ir.data_files)

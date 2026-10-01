@@ -203,8 +203,8 @@ def written(name):
 
 
 nginx = compiled["nginx"].files["waf_maps.conf"]
-check("nginx: map keys in waf_maps.conf",
-      len(re.findall(r'^  "~', nginx, re.M)), written("nginx"))
+check("nginx: map keys in waf_maps.conf: a rule is one, or a few for a list of phrases",
+      len(re.findall(r'^  "~', nginx, re.M)), sum(d.keys for d in compiled["nginx"].decisions if d.emitted))
 check("apache: SecRule lines in the category files",
       sum(len(re.findall(r"^SecRule ", text, re.M)) for text in compiled["apache"].files.values()),
       written("apache"))
@@ -272,6 +272,81 @@ check("a negated operator is not written as the expression it negates",
       backends.get("traefik").compile(ir.IR(rules=[rule(
           operator={"name": "rx", "negated": True, "argument": "zqxjk"}, pattern="!@rx zqxjk", **UA)])
       ).decisions[0].reason, "operator-unsupported")
+print("what the nginx backend writes for a list of phrases")
+from patterns.backends import nginx as nginx_backend  # noqa: E402
+from patterns.corpus import nginx_uri  # noqa: E402
+
+DATA = {"words.data": ["zqxjk-one", "zq.two", "ZQ three", "zq$four"]}
+
+
+def nginx_decision(argument="zqxjk", name="rx", data=None, **extra):
+    """What the nginx backend does with one rule made for the purpose. As in the IR, `pattern` is the operator again."""
+    record = rule(operator={"name": name, "negated": False, "argument": argument},
+                  pattern=f"@{name} {argument}", **extra)
+    one = backends.get("nginx").compile(ir.IR(rules=[record], data_files=data or {}))
+    return one.decisions[0], one.files["waf_maps.conf"]
+
+
+pm_inline, maps = nginx_decision("zqxjk-one zq.two", "pm")
+check("@pm is written, a phrase list with each phrase escaped, case ignored: `~*`",
+      (pm_inline.emitted, '"~*(?:zqxjk\\\\-one|zq\\\\.two)"' in maps), (True, True))
+pm_file, maps = nginx_decision("words.data", "pmFromFile", DATA)
+check("so is @pmFromFile, from the list the IR carries",
+      (pm_file.emitted, pm_file.keys, '"~*(?:zqxjk\\\\-one|zq\\\\.two|ZQ\\\\ three|zq\\\\$four)"' in maps), (True, 1, True))
+check("a phrase list the IR does not have is not guessed at",
+      (nginx_decision("gone.data", "pmFromFile", DATA)[0].emitted,
+       nginx_decision("gone.data", "pmFromFile", DATA)[0].reason,
+       nginx_decision("gone.data", "pmFromFile", DATA)[0].detail),
+      (False, "operator-unsupported", "@pmFromFile (the IR has no such phrase list)"))
+check("the name of the list is read with its blank space trimmed",
+      nginx_decision("words.data ", "pmFromFile", DATA)[0].emitted, True)
+check("an empty one is not written", nginx_decision("e.data", "pmFromFile", {"e.data": []})[0].reason, "empty-pattern")
+negated = backends.get("nginx").compile(ir.IR(rules=[rule(
+    operator={"name": "pm", "negated": True, "argument": "zqxjk"}, pattern="!@pm zqxjk")])).decisions[0]
+check("a negated one is not: a map key says what matches", (negated.emitted, negated.reason), (False, "operator-unsupported"))
+check("a phrase list is checked against ordinary traffic, and the rule is written whole or not at all",
+      nginx_decision("zqxjk googlebot", "pm", location="User-Agent")[0].reason, "matches-benign-traffic")
+late = [f"zq-filler-{i:04d}-" + "y" * 30 for i in range(400)] + ["googlebot"]
+check("the check covers every key: a phrase that matches ordinary traffic in the last one keeps the rule out",
+      (len(nginx_backend.phrase_alternations(late)) > 1,
+       nginx_decision(" ".join(late), "pm", location="User-Agent")[0].reason), (True, "matches-benign-traffic"))
+check("the severity and the category are the rule's, as for a regular expression",
+      '"high:test"' in nginx_decision("zqxjk", "pm")[1], True)
+
+many = [f"phrase-{i:05d}-" + "x" * 40 for i in range(2000)]
+chunks = nginx_backend.phrase_alternations(many)
+check("a long list is packed into as few keys as fit: more than one, and fewer than a key each",
+      1 < len(chunks) < 100, True)
+check("each key is within what nginx takes as one parameter, quotes and ~* included",
+      max(len(nginx_backend._escape_for_config('"~*' + c + '"').encode()) for c in chunks) <= nginx_backend.NGINX_MAX_PARAMETER,
+      True)
+check("and none of the phrases is lost, or repeated",
+      sorted(p for c in chunks for p in re.split(r"(?<!\\)\|", c[3:-1])), sorted(re.escape(p) for p in many))
+check("a phrase that is there twice is there once", nginx_backend.phrase_alternations(["a", "b", "a"]), ["(?:a|b)"])
+check("no phrases, no keys", nginx_backend.phrase_alternations([]), [])
+try:
+    nginx_backend.phrase_alternations(["x" * 5000])
+    too_long = False
+except ValueError:
+    too_long = True
+check("a phrase that cannot fit in a key alone is refused, not cut", too_long, True)
+check("a rule whose list does not fit is not written, and says so",
+      nginx_decision("big.data", "pmFromFile", {"big.data": ["x" * 5000]})[0].reason, "parameter-too-long")
+
+print("what nginx puts in $uri")
+check("it is the path decoded: `%2e` is a dot, `%2F` a slash",
+      [nginx_uri(p) for p in ("/%2egit/config", "/uploads/c99%2Ephp", "/etc%2Fpasswd")],
+      ["/.git/config", "/uploads/c99.php", "/etc/passwd"])
+check("and normalised: `.`, `..` and `//`", [nginx_uri(p) for p in ("/a/./b/../c", "//a//b/", "/../x")],
+      ["/a/c", "/a/b/", "/x"])
+check("a rule on the request path is written on $uri",
+      "map $uri $waf_uri" in nginx_decision("^/zq", location="Request-Filename")[1], True)
+check("and checked against the path as nginx holds it: `%20` and `%28` are a space and a bracket there",
+      nginx_decision(r"Report \(2026\)", location="Request-Filename")[0].reason, "matches-benign-traffic")
+check("a rule on the method is written on $request_method, and checked against it",
+      (nginx_decision("^ZQXJK$", location="Request-Method")[0].emitted,
+       nginx_decision("^GET$", location="Request-Method")[0].reason), (True, "matches-benign-traffic"))
+
 print("what the Apache backend writes")
 ID_OFFSET = 9_000_000
 apache_records = [(d, R.rules[d.index]) for d in compiled["apache"].decisions if d.emitted]
@@ -458,7 +533,7 @@ check("what each backend declares it can express is what is shown above and noth
       {n: (c.capabilities.dialect, sorted(c.capabilities.operators),
            sorted(c.capabilities.transformations), c.capabilities.case_insensitive)
        for n, c in ((n, backends.get(n)) for n in backends.names())},
-      {"nginx": ("pcre", ["rx"], ["lowercase"], True),
+      {"nginx": ("pcre", ["pm", "pmFromFile", "rx"], ["lowercase"], True),
        "apache": ("pcre", ["rx"], ["lowercase"], True),
        "traefik": ("re2", ["rx"], [], True),
        "haproxy": ("pcre", ["rx"], ["lowercase"], True)})

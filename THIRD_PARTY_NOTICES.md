@@ -28,8 +28,11 @@ redistribution, a copy is included in the [`LICENSES/`](LICENSES/) directory.
 
 - **Upstream:** https://github.com/coreruleset/coreruleset
 - **Provides:** the WAF detection rules (SQLi, XSS, RCE, LFI, RFI, generic anomaly
-  and protocol-violation patterns). `owasp2json.py` downloads the CRS `.conf` rule
-  files, extracts the `SecRule` patterns, and writes them to `owasp_rules.json`;
+  and protocol-violation patterns) and the phrase lists they read (`rules/*.data`).
+  `owasp2json.py` downloads the CRS `.conf` rule files, extracts the `SecRule`
+  patterns, and the `.data` files the rules name, and writes them to
+  `owasp_rules.json` (the phrases of each list are its `data_files` key, with
+  comments and blank lines removed);
   the `json2*.py` converters then transform that JSON into
   `waf_patterns/nginx/`, `waf_patterns/apache/`, `waf_patterns/traefik/`, and
   `waf_patterns/haproxy/`.
@@ -41,7 +44,7 @@ redistribution, a copy is included in the [`LICENSES/`](LICENSES/) directory.
   - Copyright © the OWASP® CRS project and its contributors.
   - **Modification / "state changes" notice (Apache-2.0 §4(b)):** the files
     `owasp_rules.json` and everything under `waf_patterns/**` are **derived and
-    converted works**. The original CRS `SecRule` directives have been parsed,
+    converted works**. The original CRS `SecRule` directives and phrase lists have been parsed,
     filtered, reformatted, and translated into Nginx `map`/`if` directives, Apache
     ModSecurity `SecRule` sets, Traefik middleware TOML, and HAProxy ACL files.
     These outputs are **not** the unmodified OWASP Core Rule Set and are not

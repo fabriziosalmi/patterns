@@ -53,13 +53,16 @@ attacks ([`patterns/corpus.py`](patterns/corpus.py)):
 | | |
 |---|---|
 | Ordinary requests refused | **0 of 122** |
-| Attacks refused, sent in clear | **14 of 21** |
-| Attacks refused, percent-encoded | **3 of 21** |
+| Attacks refused, sent in clear | **18 of 21** |
+| Attacks refused, percent-encoded | **6 of 21** |
 
 The gap between the last two rows is the transformation chain. `nginx` cannot
 url-decode inside a `map`, so a pattern written to run after `t:urlDecodeUni`
 sees `%3Cscript%3E` where CRS would have seen `<script>`. Everything that
-depends on decoding is caught in clear and missed encoded.
+depends on decoding is caught in clear and missed encoded, with one exception that
+is the point of `$uri`: the request path. nginx has already decoded and normalised
+it by the time a map reads it, which is the `t:urlDecodeUni`, `t:normalizePath` chain
+the rules on the path declare, so `/%2egit/config` is `/.git/config` to them.
 
 Three further limits, all visible in the header of the generated
 `waf_maps.conf`:
@@ -75,11 +78,14 @@ Three further limits, all visible in the header of the generated
 - **Rules that record rather than refuse are not emitted.** CRS 921170 is
   `@rx .`, matches any character, declares `pass`, and exists to count repeated
   parameter names.
-- **Only `@rx` converts.** `@detectSQLi` and `@detectXSS` are libinjection,
-  `@pmFromFile` is a word list, `@lt`/`@ge` are anomaly-score comparisons.
-  None of them is a regular expression, so none can become a `map` key. That is
-  why a scanner User-Agent and a request for `/.env` pass: CRS catches both with
-  `@pmFromFile`.
+- **`@rx`, `@pm` and `@pmFromFile` convert.** The two phrase operators are a
+  case-insensitive match against a list, which is an alternation of the phrases,
+  written in as few `map` keys as nginx's parameter limit allows (15 rules, 200 keys
+  in all, from 6,125 phrases the IR carries). That is what catches a scanner
+  User-Agent and a request for `/.env` or `/.git/config`, which CRS refuses with
+  `@pmFromFile`. `@detectSQLi` and `@detectXSS` are libinjection and `@lt`/`@ge` are
+  anomaly-score comparisons: none of them is a regular expression or a list, so none
+  can become a `map` key.
 
 This is a useful first filter in front of an application, and it is not a
 replacement for a WAF that can apply transformations and keep score. If you need
@@ -99,7 +105,7 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 
 | Target | Full | Approximate | Unsound | Dropped |
 |---|---:|---:|---:|---:|
-| Nginx | 12 | 156 | 0 | 581 |
+| Nginx | 13 | 173 | 0 | 563 |
 | Apache (ModSecurity) | 9 | 170 | 0 | 570 |
 | Traefik | 0 | 3 | 0 | 746 |
 | HAProxy | 6 | 171 | 0 | 572 |
@@ -108,10 +114,10 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 
 | Reason | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
 |---|---:|---:|---:|---:|
-| an operator the backend cannot express | 398 | 398 | 2 | 398 |
-| matched on a request component the target does not have | 96 | 93 | 685 | 93 |
+| an operator the backend cannot express | 368 | 398 | 2 | 398 |
+| matched on a request component the target does not have | 106 | 93 | 685 | 93 |
 | not a rule: it changes another rule | 54 | 54 | 54 | 54 |
-| it refuses ordinary traffic once converted | 13 | 21 |  | 15 |
+| it refuses ordinary traffic once converted | 15 | 21 |  | 15 |
 | longer than the target accepts | 16 |  |  |  |
 | its severity is below what refuses, and the target cannot only record |  |  | 5 | 8 |
 | it records and does not refuse | 4 | 4 |  | 4 |
@@ -120,9 +126,9 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 
 | Loss | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
 |---|---:|---:|---:|---:|
-| matched on other variables than the rule names | 149 | 164 | 3 | 168 |
-| transformations the rule was written to run after are not applied | 115 | 116 | 2 | 115 |
-| a chain written without all of its links | 13 | 10 |  | 11 |
+| matched on other variables than the rule names | 161 | 164 | 3 | 168 |
+| transformations the rule was written to run after are not applied | 128 | 116 | 2 | 115 |
+| a chain written without all of its links | 14 | 10 |  | 11 |
 <!-- coverage:end -->
 
 The nginx figures above are measured on the rules in its row here. The table is

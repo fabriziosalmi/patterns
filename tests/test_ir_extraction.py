@@ -379,18 +379,94 @@ finally:
 check("rules come out in file-name order, not in the order the downloads finish",
       [r["id"] for r in rules], ["A.conf", "B.conf", "C.conf"])
 
+print("the phrase lists")
+check("a phrase is a line: no comment, no blank line, no blank space around it",
+      owasp2json.parse_data_file("# a comment\n\n  .htaccess  \n# .env\n.htpasswd\r\n\t\n"),
+      [".htaccess", ".htpasswd"])
+check("a `#` that is not the start of a line is part of the phrase",
+      owasp2json.parse_data_file("a#b\n#c\n"), ["a#b"])
+check("each phrase once, in file order", owasp2json.parse_data_file("b\na\nb\nc\na\n"), ["b", "a", "c"])
+check("and not only ASCII", owasp2json.parse_data_file("http://169。254。169。254\n⑯⑨\n"),
+      ["http://169。254。169。254", "⑯⑨"])
+check("a file of comments has no phrases", owasp2json.parse_data_file("# nothing\n\n"), [])
+PM_FILE = ('SecRule REQUEST_FILENAME "@pmFromFile restricted-files.data" "id:930130,phase:1,block,'
+           't:none,t:urlDecodeUni,t:normalizePath,msg:\'x\',severity:\'CRITICAL\'"')
+PM_INLINE = 'SecRule ARGS "@pm document.cookie document.domain" "id:941999,phase:2,block,t:none"'
+PM_AGAIN = 'SecRule ARGS|REQUEST_HEADERS "@pmFromFile unix-shell.data" "id:932160,phase:2,block,t:none"\n' + PM_FILE.replace("930130", "930131")
+referenced = owasp2json.referenced_data_files(extract(PM_FILE + "\n" + PM_INLINE + "\n" + PM_AGAIN))
+check("the files the rules read: the @pmFromFile ones, each once, sorted", referenced,
+      ["restricted-files.data", "unix-shell.data"])
+check("a rule that has no such operator reads none", owasp2json.referenced_data_files(extract(XSS_SCRIPT_TAG)), [])
+check("an inline @pm is a list of its own, and reads no file", owasp2json.referenced_data_files(extract(PM_INLINE)), [])
+
+import base64  # noqa: E402
+import hashlib  # noqa: E402
+
+
+def blob_of(content: bytes):
+    """What GitHub says about a file: its blob sha, and the content as it sends it."""
+    sha = hashlib.sha1(b"blob %d\0" % len(content) + content).hexdigest()
+    return sha, base64.b64encode(content).decode()
+
+
+class FakeGitHub:
+    """Stands in for the two calls that fetch a data file; counts them."""
+
+    def __init__(self, files, lie_about=None):
+        self.blobs = {n: blob_of(c) for n, c in files.items()}
+        self.lie_about = lie_about
+        self.calls = 0
+
+    def __enter__(self):
+        self.saved = (owasp2json.fetch_data_file_index, owasp2json.fetch_github_blob)
+        by_sha = {sha: b64 for sha, b64 in self.blobs.values()}
+
+        def index(session, ref):
+            self.calls += 1
+            return {n: sha for n, (sha, _) in self.blobs.items()}
+
+        def blob(session, sha):
+            self.calls += 1
+            b64 = by_sha.get(sha, "")
+            return base64.b64encode(b"tampered").decode() if (sha, b64) and sha == self.lie_about else b64
+
+        owasp2json.fetch_data_file_index, owasp2json.fetch_github_blob = index, blob
+        return self
+
+    def __exit__(self, *exc):
+        owasp2json.fetch_data_file_index, owasp2json.fetch_github_blob = self.saved
+
+
+files = {"a.data": b"# c\none\ntwo\n", "b.data": "http://169。254\n".encode("utf-8"), "unused.data": b"x\n"}
+with FakeGitHub(files) as fake:
+    got = owasp2json.fetch_data_files(None, "v1", ["b.data", "a.data"])
+check("the files a rule reads are fetched and read", got, {"a.data": ["one", "two"], "b.data": ["http://169。254"]})
+check("in name order, so the document does not depend on the order they are asked for", list(got), ["a.data", "b.data"])
+with FakeGitHub(files) as fake:
+    owasp2json.fetch_data_files(None, "v1", [])
+check("none are fetched when none are read: no request is made", fake.calls, 0)
+with FakeGitHub(files) as fake:
+    check("a file a rule reads that the ref does not have is an error, not a gap",
+          owasp2json.fetch_data_files(None, "v1", ["a.data", "gone.data"]), None)
+with FakeGitHub(files, lie_about=blob_of(files["a.data"])[0]) as fake:
+    check("one whose content is not what GitHub lists is an error: the SHA is verified",
+          owasp2json.fetch_data_files(None, "v1", ["a.data"]), None)
+with FakeGitHub({"bad.data": b"\xff\xfe not utf-8\n"}) as fake:
+    check("one that is not UTF-8 is an error", owasp2json.fetch_data_files(None, "v1", ["bad.data"]), None)
+
 print("the file")
 with tempfile.TemporaryDirectory() as tmp:
     out = Path(tmp) / "rules.json"
     owasp2json.save_as_json([only_rule(XSS_SCRIPT_TAG)], str(out),
                             owasp2json.build_provenance("v4.29.0"),
-                            {"critical": 5})
+                            {"critical": 5}, {"a.data": ["one"]})
     document = json.loads(out.read_text())
 check("it is versioned", document["schema_version"], owasp2json.SCHEMA_VERSION)
 check("it carries the score defaults", document["score_defaults"], {"critical": 5})
 check("and the provenance", document["_provenance"]["source_ref"], "v4.29.0")
+check("and the phrase lists the rules read", document["data_files"], {"a.data": ["one"]})
 check("in that order, version first", list(document),
-      ["schema_version", "_provenance", "score_defaults", "rules"])
+      ["schema_version", "_provenance", "score_defaults", "data_files", "rules"])
 
 print(f"\n{checks - failures}/{checks} checks passed")
 if failures:

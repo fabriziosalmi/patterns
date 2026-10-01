@@ -32,6 +32,8 @@ class IR:
         schema_version: The version the document declares, None for a bare list.
         score_defaults: What each anomaly level is worth.
         provenance: The `_provenance` block, empty for a bare list.
+        data_files: The phrases of each `.data` file an `@pmFromFile` rule reads, by file
+            name. Empty for a document of schema 1 or a bare list, which has none.
     """
 
     rules: List[Dict]
@@ -39,6 +41,7 @@ class IR:
     schema_version: Optional[int] = None
     score_defaults: Dict[str, int] = field(default_factory=dict)
     provenance: Dict[str, str] = field(default_factory=dict)
+    data_files: Dict[str, List[str]] = field(default_factory=dict)
 
 
 def load(path: Union[str, Path] = DEFAULT_INPUT) -> IR:
@@ -69,6 +72,7 @@ def load(path: Union[str, Path] = DEFAULT_INPUT) -> IR:
         schema_version=data.get("schema_version"),
         score_defaults=data.get("score_defaults") or {},
         provenance=provenance,
+        data_files=data.get("data_files") or {},
     )
 
 

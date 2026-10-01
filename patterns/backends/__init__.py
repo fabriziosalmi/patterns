@@ -27,6 +27,8 @@ class Decision:
         location: For a rule that is, the location the backend matched it on, in
             the IR's terms (`query-string`, `user-agent`, ...).
         pattern: For a rule that is, the regular expression that was written.
+        keys: For a rule that is, how many entries it became. One, unless a list of
+            phrases was too long for the target to take as one.
     """
 
     index: int
@@ -35,6 +37,7 @@ class Decision:
     detail: Optional[str] = None
     location: Optional[str] = None
     pattern: Optional[str] = None
+    keys: int = 1
 
 
 @dataclass

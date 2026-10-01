@@ -159,11 +159,30 @@ check("an update that has an operator",
 check("an update that names no rule", refuses(wrapped({**update, "target_rule_id": None}), "target_rule_id"))
 check("an update that has a phase", refuses(wrapped({**update, "phase": 2}), "phase"))
 
-check("a document of another version", refuses(wrapped(good, schema_version=2), "schema_version"))
+check("a document of another version", refuses(wrapped(good, schema_version=1), "schema_version"))
 check("a document without provenance",
       refuses({k: v for k, v in wrapped(good).items() if k != "_provenance"}, "_provenance"))
 check("a document without the score defaults",
       refuses({k: v for k, v in wrapped(good).items() if k != "score_defaults"}, "score_defaults"))
+
+print("the phrase lists")
+check("a document without data_files",
+      refuses({k: v for k, v in wrapped(good).items() if k != "data_files"}, "data_files"))
+check("a phrase list that is not a list of strings",
+      refuses(wrapped(good, data_files={"x.data": "word"}), "data_files"))
+check("an empty phrase",
+      refuses(wrapped(good, data_files={"x.data": ["a", ""]}), "data_files"))
+check("a phrase twice",
+      refuses(wrapped(good, data_files={"x.data": ["a", "a"]}), "data_files"))
+check("the control: a list of phrases is accepted", errors(wrapped(good, data_files={"x.data": ["a", "b"]})), [])
+named = sorted({r["operator"]["argument"] for r in document["rules"]
+                if r["operator"] and r["operator"]["name"] == "pmFromFile"})
+check("every file an @pmFromFile rule reads is in data_files", [n for n in named if n not in document["data_files"]], [])
+check("and every file in data_files is read by one", sorted(set(document["data_files"]) - set(named)), [])
+check("a phrase is not a comment, and has no blank space at either end",
+      [(n, p) for n, ps in document["data_files"].items() for p in ps if p.startswith("#") or p != p.strip()], [])
+check("a list that is empty is a list nobody can use",
+      sorted(n for n, ps in document["data_files"].items() if not ps), [])
 check("a score default for a level that does not exist",
       refuses(wrapped(good, score_defaults={"fatal": 9}), "fatal"))
 

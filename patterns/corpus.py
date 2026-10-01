@@ -64,6 +64,7 @@ _DEFAULTS = {
 # The request component each rule location is matched against, by the nginx
 # variable the nginx backend keys its map on.
 VARIABLE_FIELDS = {
+    "$request_method": "method",
     "$request_uri": "request_uri",
     "$args": "args",
     "$http_user_agent": "user_agent",
@@ -427,6 +428,26 @@ ATTACKS: List[Dict[str, str]] = [
     request("web shell", "/uploads/c99.php"),
     request("scanner user agent", "/", user_agent="sqlmap/1.8#stable"),
 ]
+
+
+def nginx_uri(path: str) -> str:
+    """
+    What nginx holds in `$uri` for a request path: percent-decoded, with `//` merged and
+    `.` and `..` segments resolved. This is the `t:urlDecodeUni` and `t:normalizePath`
+    chain the rules on REQUEST_FILENAME declare, which nginx has already applied by the
+    time a map reads the variable.
+    """
+    parts: List[str] = []
+    decoded = urllib.parse.unquote(path)
+    for segment in decoded.split("/"):
+        if segment in ("", "."):
+            continue
+        if segment == "..":
+            if parts:
+                parts.pop()
+            continue
+        parts.append(segment)
+    return "/" + "/".join(parts) + ("/" if parts and decoded.endswith("/") else "")
 
 
 def _leaves(value) -> List[str]:

@@ -4,7 +4,7 @@
 
 ```text
 coreruleset  ──▶  owasp2json.py  ──▶  owasp_rules.json  ──▶  json2{nginx,apache,traefik,haproxy}.py
-                                      (schema_version 1)
+                                      (schema_version 2)
 ```
 
 The IR keeps what a CRS rule declares rather than what one converter happens to need. A converter decides what it can express; it should not have to guess what the rule said.
@@ -13,9 +13,10 @@ The IR keeps what a CRS rule declares rather than what one converter happens to 
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "_provenance": { "source": "OWASP CoreRuleSet", "source_ref": "v4.29.0", "license": "Apache-2.0", "...": "..." },
   "score_defaults": { "critical": 5, "error": 4, "warning": 3, "notice": 2 },
+  "data_files": { "restricted-files.data": [ ".htaccess", ".env", "..." ], "...": [ "..." ] },
   "rules": [ "..." ]
 }
 ```
@@ -25,6 +26,7 @@ The IR keeps what a CRS rule declares rather than what one converter happens to 
 | `schema_version` | The version of the schema the document was written for. A reader that does not know the version should not guess at the fields. |
 | `_provenance` | The upstream repository, the **one tag** the rules were read from, and the licence. The file is a derived work of the CRS (Apache-2.0); see [THIRD_PARTY_NOTICES](https://github.com/fabriziosalmi/patterns/blob/main/THIRD_PARTY_NOTICES.md). |
 | `score_defaults` | What each anomaly level is worth, read from `REQUEST-901-INITIALIZATION.conf`. These are CRS defaults. A deployment can override them in `crs-setup.conf`. |
+| `data_files` | The phrase lists that `@pmFromFile` rules read, by file name: the phrases of each, as the CRS ships them in `rules/*.data`, in file order, without comments or blank lines. Only the files a rule names are here, and every file a rule names is. See below. |
 | `rules` | One record per directive, in file-name order and, within a file, in file order. |
 
 The order is stable: two runs on the same tag produce the same file.
@@ -76,6 +78,12 @@ A rule matched against `ARGS|!ARGS:id` has two entries, and the second removes o
 
 An operator that is not `rx` is not a regular expression, and a converter that only knows patterns cannot emit it.
 
+### Phrase lists
+
+`@pm a b c` is a case-insensitive match against the phrases of its argument, split on blank space. `@pmFromFile name.data` is the same against the phrases of a file, and its `argument` is the file's name: the phrases are in `data_files[name]`. The extractor fetches the files a rule names from the same tag as the rules, checks each against the blob SHA GitHub lists, and stops with an error if one is missing, because a rule written without its phrases would be a rule that does not say what it is for.
+
+A phrase list can change when no rule does: `restricted-files.data` gains a path and `@pmFromFile restricted-files.data` is the same record. [The diff between releases](/api#changes-between-releases) reports it under `data_files`.
+
 ### Score
 
 ```json
@@ -103,6 +111,7 @@ The records follow each other in the file, head first, positions `0, 1, 2, ...` 
 - Every field of a record is present, with the type above.
 - `directive` is `SecRule` exactly when `operator` is not `null`.
 - Ids are unique. `"no_id"` is the only repeated value.
+- Every `@pmFromFile` argument is a key of `data_files`, and every key is the argument of one. A phrase is not empty, not a comment, has no blank space at either end, and is in its list once.
 - A record with `chain.role == "link"` has `id == "no_id"`, `action == null`, `score == null`, and follows the record it names.
 - Every `score.level` has an entry in `score_defaults`.
 - `target_rule_id` of an update names a rule that is in the file.
@@ -128,6 +137,7 @@ Both are replaced by `operator` and `variables`, and removed when the converters
 | Heads of a chain | 55 |
 | Links of a chain | 73 |
 | Records that add an anomaly score | 345 |
+| Phrase lists (`data_files`) | 19, with 6,125 phrases |
 
 ## Versioning
 

@@ -113,6 +113,34 @@ def _statuses(ir: IR) -> Dict[str, Dict[str, Tuple[str, Optional[str]]]]:
     return out
 
 
+def _data_changes(old: IR, new: IR) -> Dict:
+    """
+    What changed in the phrase lists the rules read.
+
+    A phrase list can change and no rule with it: `@pmFromFile restricted-files.data` is
+    the same record the day after a path is added to the file, and what a target writes
+    for it is not the same. A diff of the records alone would say nothing changed.
+
+    Returns:
+        The files added and removed, and for each one whose phrases changed how many
+        were added and removed and which rules read it.
+    """
+    readers: Dict[str, List[str]] = {}
+    for rule in new.rules:
+        operator = rule.get("operator")
+        if operator and operator["name"] == "pmFromFile":
+            readers.setdefault(operator["argument"], []).append(rule["id"])
+    changed = []
+    for name in sorted(set(old.data_files) & set(new.data_files)):
+        before, after = set(old.data_files[name]), set(new.data_files[name])
+        if before != after:
+            changed.append({"name": name, "added": len(after - before), "removed": len(before - after),
+                            "rules": sorted(readers.get(name, []), key=_order)})
+    return {"added": sorted(set(new.data_files) - set(old.data_files)),
+            "removed": sorted(set(old.data_files) - set(new.data_files)),
+            "changed": changed}
+
+
 def compare(old: IR, new: IR, targets: bool = True) -> Dict:
     """
     Compares two versions of the rules.
@@ -154,6 +182,11 @@ def compare(old: IR, new: IR, targets: bool = True) -> Dict:
             "source_ref_changed": old.crs_ref != new.crs_ref,
         },
     }
+
+    if same_schema and (new.schema_version or 0) >= 2:
+        data = _data_changes(old, new)
+        result["data_files"] = data
+        result["summary"]["data_files_changed"] = len(data["added"]) + len(data["removed"]) + len(data["changed"])
 
     statuses_old = _statuses(old) if targets and same_schema else None
     statuses_new = _statuses(new) if targets and same_schema else None
@@ -238,7 +271,7 @@ def to_markdown(change: Dict, limit: int = 25) -> str:
     s = change["summary"]
     frm, to = change["from"]["source_ref"], change["to"]["source_ref"]
     moved = "" if not s["source_ref_changed"] else f": CRS {frm} to {to}"
-    if not (s["added"] or s["removed"] or s["changed"]):
+    if not (s["added"] or s["removed"] or s["changed"] or s.get("data_files_changed")):
         return f"No rule changed since the previous release (CRS {to}).\n"
 
     out: List[str] = [f"**Rules{moved}.** {s['added']} added, {s['removed']} removed, "
@@ -267,6 +300,14 @@ def to_markdown(change: Dict, limit: int = 25) -> str:
         if len(items) > limit:
             out.append(f"- and {len(items) - limit} more, in `changes.json`")
         out.append("")
+
+    data = change.get("data_files")
+    if data and s.get("data_files_changed"):
+        lines = ([f"`{n}` is new" for n in data["added"]] + [f"`{n}` is gone" for n in data["removed"]]
+                 + [f"`{c['name']}`: {c['added']} added, {c['removed']} removed"
+                    + (f" (read by {', '.join(c['rules'])})" if c["rules"] else "")
+                    for c in data["changed"]])
+        section("Phrase lists the rules read", lines, lambda text: text)
 
     if targets:
         rows = [(n, m) for n, t in targets.items() for m in t["status_changed"]]

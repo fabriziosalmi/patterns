@@ -9,7 +9,7 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 
 | Target | Full | Approximate | Unsound | Dropped |
 |---|---:|---:|---:|---:|
-| Nginx | 12 | 156 | 0 | 581 |
+| Nginx | 13 | 173 | 0 | 563 |
 | Apache (ModSecurity) | 9 | 170 | 0 | 570 |
 | Traefik | 0 | 3 | 0 | 746 |
 | HAProxy | 6 | 171 | 0 | 572 |
@@ -18,10 +18,10 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 
 | Reason | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
 |---|---:|---:|---:|---:|
-| an operator the backend cannot express | 398 | 398 | 2 | 398 |
-| matched on a request component the target does not have | 96 | 93 | 685 | 93 |
+| an operator the backend cannot express | 368 | 398 | 2 | 398 |
+| matched on a request component the target does not have | 106 | 93 | 685 | 93 |
 | not a rule: it changes another rule | 54 | 54 | 54 | 54 |
-| it refuses ordinary traffic once converted | 13 | 21 |  | 15 |
+| it refuses ordinary traffic once converted | 15 | 21 |  | 15 |
 | longer than the target accepts | 16 |  |  |  |
 | its severity is below what refuses, and the target cannot only record |  |  | 5 | 8 |
 | it records and does not refuse | 4 | 4 |  | 4 |
@@ -30,9 +30,9 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 
 | Loss | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
 |---|---:|---:|---:|---:|
-| matched on other variables than the rule names | 149 | 164 | 3 | 168 |
-| transformations the rule was written to run after are not applied | 115 | 116 | 2 | 115 |
-| a chain written without all of its links | 13 | 10 |  | 11 |
+| matched on other variables than the rule names | 161 | 164 | 3 | 168 |
+| transformations the rule was written to run after are not applied | 128 | 116 | 2 | 115 |
+| a chain written without all of its links | 14 | 10 |  | 11 |
 <!-- coverage:end -->
 
 The numbers are counted on the records of the [intermediate representation](/ir), which include the links of a chain and the `SecRuleUpdateTargetById` directives, so they are a little more than the number of CRS rules. [`coverage.json`](https://github.com/fabriziosalmi/patterns/blob/main/waf_patterns/coverage.json) holds the verdict for each record, and is published with every release.

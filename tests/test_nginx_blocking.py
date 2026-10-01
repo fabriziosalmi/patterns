@@ -56,8 +56,17 @@ BOTS_PORT = 18999
 # pattern was written to run after `t:urlDecodeUni` and nginx cannot apply it.
 # Both floors are below what the current rule set achieves; they exist to catch
 # a collapse, not to pin a number. See README, "What this catches".
-MINIMUM_CAUGHT_IN_CLEAR = 12
-MINIMUM_CAUGHT_ENCODED = 2
+MINIMUM_CAUGHT_IN_CLEAR = 16
+MINIMUM_CAUGHT_ENCODED = 5
+
+# What only a phrase list and `$uri` catch (#52): CRS refuses `/.env` and `/.git/config`
+# with `@pmFromFile restricted-files.data` on REQUEST_FILENAME, and a scanner's User-Agent
+# with `@pmFromFile scanners-user-agents.data`. None of them is a regular expression, so
+# they were all lost until the lists were written as alternations and the path was read
+# from `$uri`, which nginx has already decoded. They are caught percent-encoded as well,
+# because `$uri` arrives decoded. A named list is a stronger guard than a floor: the floors
+# above would still pass if these three were lost and some other rule took their place.
+MUST_CATCH = ["sensitive file", "git directory", "scanner user agent"]
 
 
 def wrap(maps_file: Path, rules_file: Path, workdir: Path, bots_file: Optional[Path] = None) -> str:
@@ -186,6 +195,15 @@ def main() -> int:
             print(f"  FAIL  {rule_id} names a request that is not in the corpus: {name}")
             continue
         print(f"        {rule_id} ({category}) matches {name!r}: {entry['why']}")
+
+    print("\nwhat only a phrase list and $uri catch (#52)")
+    for label, caught in (("in clear", caught_clear), ("percent-encoded", caught_encoded)):
+        lost = [name for name in MUST_CATCH if name not in caught]
+        if lost:
+            failures += 1
+            print(f"  FAIL  {label}: not refused: {', '.join(lost)}")
+        else:
+            print(f"  ok    {label}: {', '.join(MUST_CATCH)}")
 
     print("\nnot caught in clear:")
     for entry in ATTACKS:
