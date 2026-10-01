@@ -1,192 +1,209 @@
-import logging
-import re
-from typing import Dict, List, Optional, Tuple
+"""
+The HAProxy target: pattern files, and the few lines that use them.
 
+HAProxy's configuration has no room for a CRS rule. It was written as an `acl` line
+for each rule, and no HAProxy would read the file (#67, #68): a regular expression
+full of quotes is a configuration syntax error (`unmatched quote`, 32 times), a rule on
+the query string was written with `url_param_reg`, which is not a fetch HAProxy has,
+295 numeric comparisons were written against a location called `unknown`, and the one
+`http-request deny if a or b or ...` line had hundreds of names where HAProxy takes 64.
+And docs/haproxy.md told people to load it with `-f`, which takes a file of patterns, so
+it was a configuration fragment documented as something else.
+
+HAProxy takes a regular expression from a *pattern file*: `acl x fetch -m reg -f file`
+reads one pattern per line, as it stands. No quoting, nothing about line length (a line
+of 70,000 characters loads), and `#` in the middle of a line is part of the pattern.
+That is what this writes, as the documentation always said:
+
+  waf-<where>[-<what is applied>].acl   the expressions that are matched on the same
+                                       fetch with the same converters, one to a line,
+                                       each after a comment that names the CRS rule
+  waf.cfg                              the `acl` lines that load them and the one
+                                       `http-request deny`, to paste into a `frontend`
+
+A rule is written when it is something this target can express and refuse with:
+
+  * `@rx`, not negated, as the expression CRS wrote it, `(?i)` and all: it is PCRE, and
+    HAProxy compiles it with PCRE2, so nothing is translated and there is no `-i` to
+    approximate a flag with.
+  * the converters the rule declares that HAProxy has: `t:lowercase` is `lower`, and
+    `t:urlDecodeUni` is `url_dec(1)`, which decodes `%XX` and turns `+` into a space but,
+    unlike ModSecurity's, not `%uXXXX`: it is applied, and not declared, so the matrix
+    still says the rule is approximate. The others (`htmlEntityDecode`, `jsDecode`, ...)
+    HAProxy has no converter for.
+  * the fetch the rule's location is, one of those the corpus can say is ordinary.
+  * only severity `high`: the rule refuses, and HAProxy has no way to write a pattern
+    file that only records.
+
+Where HAProxy has no include (it has none, and a second `-f` does not continue a
+section), `waf.cfg` is pasted into the `frontend`.
+"""
+
+import logging
+import urllib.parse
+from collections import defaultdict
+from typing import Callable, Dict, List, Optional, Tuple
+
+from patterns import dialects
 from patterns.backends import Backend, Capabilities, Compiled, Decision, Target, register
 from patterns.backends._common import (
-    UNSUPPORTED_FILE_OPERATORS,
+    ascii_lower,
+    haproxy_pattern,
+    modsecurity_unquote,
+    operator_of,
     provenance_header,
-    without_handled_syntax,
 )
-from patterns import dialects
+from patterns.corpus import first_ordinary_match
 from patterns.ir import IR
 
 logger = logging.getLogger(__name__)
 
-# What HAProxy cannot take from a rule, beyond the file lookups no backend can:
-# libinjection and the byte-range check have no ACL.
-UNSUPPORTED_PATTERNS = UNSUPPORTED_FILE_OPERATORS + (
-    "@detectSQLi", "@validateByteRange", "@detectXSS",
-)
+# Where the pattern files are expected to be, in `waf.cfg`. HAProxy resolves a relative
+# path from where it is started, which is not a thing a file can know.
+WAF_DIR = "/etc/haproxy/waf"
 
-# Operator Mapping:  ModSecurity -> HAProxy
-OPERATOR_MAP = {
-    # String Comparisons
-    "@streq": "str -m str",
-    "@endsWith": "str -m end",
-    "@contains": "str -m sub",
-    "!@eq": "str -m !str",  # Negated string equality
-    "!@within": "str -m !reg", # Negated regex (approximate)
-    # Integer Comparisons (These are handled separately)
-    "@lt": "<",
-    "@ge": ">=",
-    "@gt": ">",
-    "@eq": "==",
-    # IP address matching
-    "@ipMatch": "src_ip",
+BLOCKING_ACTIONS = ("block", "deny", "drop")
+
+# What each location is fetched with, and the field of the corpus that is that request
+# component. A location is here only if both exist.
+LOCATIONS: Dict[str, Tuple[str, str]] = {
+    "request-uri": ("url", "request_uri"),            # the path and the query string, as sent
+    "query-string": ("query", "args"),                # the query string, as sent
+    "request-filename": ("path", "path"),
+    "user-agent": ("hdr(user-agent)", "user_agent"),
+    "host": ("hdr(host)", "host"),
+    "referer": ("hdr(referer)", "referer"),
+    "content-type": ("hdr(content-type)", "content_type"),
+}
+
+# The transformations HAProxy has a converter for: the converter, what it is called in a
+# file name, and what it does to a value, for the check against ordinary traffic.
+CONVERTERS: Dict[str, Tuple[str, str, Callable[[str], str]]] = {
+    "lowercase": ("lower", "lowercase", ascii_lower),
+    "urlDecodeUni": ("url_dec(1)", "urldecode", lambda value: urllib.parse.unquote_plus(value)),
 }
 
 
-def _sanitize_regex_pattern(pattern: str) -> str:
-    """Helper function to clean up regex patterns."""
-    pattern = pattern.replace("@rx ", "").strip()
-    pattern = re.sub(r"\(\?i\)", "", pattern)    # Remove (?i)
-    pattern = pattern.replace("$", r"\$") # $ -> \$
-    pattern = re.sub(r"&l(?:brace|cub);?", r"{", pattern) # {
-    pattern = re.sub(r"&r(?:brace|cub);?", r"}", pattern) # }
-    pattern = re.sub(r"\\\.\*", r"\.*", pattern)      # Remove unnecessary escapes
-    pattern = re.sub(r"(?<!\\)\.(?![\w])", r"\.", pattern)  # Escape .
-    pattern = re.sub(r"\(\?:", "(", pattern)  # (?: -> (
-    return pattern
-
-
-def sanitize_pattern(pattern: str, location: str) -> Tuple[Optional[str], str]:
+def blocks(rule: Dict) -> bool:
     """
-    Sanitizes and converts a ModSecurity pattern to its HAProxy equivalent.
-    Returns: (sanitized_pattern, acl_type)  or (None, "") if unsupported.
+    Whether a rule refuses the request. One with no disruptive action inherits `pass`.
+
+    A document that predates the field has none, and its rules are kept.
     """
-    original_pattern = pattern  # Keep for logging
-
-    # 1. Handle ModSecurity operators *first*.
-    for modsec_op, haproxy_op in OPERATOR_MAP.items():
-        if pattern.startswith(modsec_op):
-            if haproxy_op in ("<", ">=", ">", "=="):  # Integer comparisons
-                # Integer comparisons are handled *separately*
-                return pattern.replace(modsec_op, haproxy_op).strip(), "int"
-            else:  # String comparisons
-                return pattern.replace(modsec_op, haproxy_op).strip(), "hdr_sub"
-
-    # 2. Check for unsupported patterns *after* operator handling.
-    for directive in UNSUPPORTED_PATTERNS:
-        if directive in pattern:
-            logger.warning(f"Skipping unsupported pattern (contains {directive}): {original_pattern}")
-            return None, ""
-
-    # 3. Handle regular expressions (@rx)
-    if "@rx" in pattern:
-        return _sanitize_regex_pattern(pattern), "hdr_reg"
-
-    # 4. If no operator and no @rx, assume it's a simple string match
-    return pattern, "hdr_sub"
+    return "action" not in rule or rule["action"] in BLOCKING_ACTIONS
 
 
-def generate_haproxy_conf(rules: List[Dict], crs_ref: str = "latest") -> Compiled:
-    """Builds the HAProxy WAF configuration (waf.acl)."""
+def _converters(rule: Dict) -> List[str]:
+    """The transformations of a rule that HAProxy has a converter for, in the rule's order."""
+    return list(dict.fromkeys(t for t in (rule.get("transformations") or []) if t in CONVERTERS))
 
+
+def _name(location: str, applied: List[str]) -> str:
+    """The name of a group of rules matched the same way: `query-string-urldecode`."""
+    return "-".join([location] + [CONVERTERS[t][1] for t in applied])
+
+
+def _write(index: int, rule: Dict) -> Tuple[Decision, Optional[Tuple[str, str]]]:
+    """
+    Decides what to do with one record.
+
+    Returns:
+        The decision, and for a rule that is written the name of its group and the
+        lines it adds to that group's pattern file (None when it is not written).
+    """
+    directive = rule.get("directive", "SecRule")
+    if directive != "SecRule":
+        return Decision(index, False, "not-a-rule", f"{directive} {rule.get('target_rule_id')}"), None
+
+    operator = operator_of(rule)
+    if operator["negated"] or operator["name"] != "rx":
+        name = ("!" if operator["negated"] else "") + "@" + operator["name"]
+        return Decision(index, False, "operator-unsupported", name), None
+
+    expression = modsecurity_unquote(operator["argument"])
+    if not expression:
+        return Decision(index, False, "empty-pattern", "nothing is left of the pattern"), None
+    if "\n" in expression or "\r" in expression:
+        return Decision(index, False, "invalid-regex", "a pattern file holds a line to a pattern"), None
+    problem = dialects.check(HAProxy.capabilities.dialect, expression)
+    if problem:
+        return Decision(index, False, "invalid-regex", problem), None
+
+    location = rule.get("location", "request-uri").lower()
+    if location not in LOCATIONS:
+        return Decision(index, False, "location-unsupported", location), None
+
+    if not blocks(rule):
+        return Decision(index, False, "not-blocking", str(rule.get("action"))), None
+
+    severity = rule.get("severity", "medium")
+    if severity != "high":
+        return Decision(index, False, "severity-below-blocking", severity), None
+
+    fetch, field = LOCATIONS[location]
+    applied = _converters(rule)
+
+    def seen(entry: Dict[str, str]) -> List[str]:
+        value = entry[field]
+        for transformation in applied:
+            value = CONVERTERS[transformation][2](value)
+        return [value]
+
+    ordinary = first_ordinary_match(expression, field, False, seen)
+    if ordinary is not None:
+        return Decision(index, False, "matches-benign-traffic", ordinary), None
+
+    category = rule.get("category", "generic").lower()
+    lines = f"# CRS {rule.get('id', 'no_id')} ({category})\n{haproxy_pattern(expression)}\n"
+    return Decision(index, True, location=location, pattern=expression), (_name(location, applied), lines)
+
+
+def _acl_name(group: str) -> str:
+    return "waf_" + group.replace("-", "_")
+
+
+def _fetch(location: str, applied: List[str]) -> str:
+    """The sample expression a group is matched on: the fetch, then its converters."""
+    return ",".join([LOCATIONS[location][0]] + [CONVERTERS[t][0] for t in applied])
+
+
+def generate_haproxy_waf(rules: List[Dict], crs_ref: str = "latest") -> Compiled:
+    """Builds the pattern files and `waf.cfg`."""
     decisions: List[Decision] = []
-    try:
-        acl_rules: Dict[str, List[str]] = {}  # { location: [acl_rules] }
-        int_rules: List[str] = []
-        deny_high: List[str] = []
-        log_medium: List[str] = []
-        tarpit_low: List[str] = []
+    groups: Dict[str, List[str]] = defaultdict(list)
+    fetches: Dict[str, str] = {}
 
-        # Process each OWASP rule
-        for index, rule in enumerate(rules):
-            rule_id = rule.get("id", "no_id")
-            category = rule.get("category", "uncategorized").lower()
-            location = rule.get("location", "User-Agent").lower() #important! lowercase
-            pattern = rule["pattern"]
-            severity = rule.get("severity", "medium").lower()
+    for index, rule in enumerate(rules):
+        decision, written = _write(index, rule)
+        decisions.append(decision)
+        if written is None:
+            continue
+        group, lines = written
+        groups[group].append(lines)
+        fetches[group] = _fetch(decision.location, _converters(rule))
 
-            sanitized_pattern, acl_type = sanitize_pattern(pattern, location)
+    files: Dict[str, str] = {}
+    header = provenance_header(crs_ref, HAProxy.title)
+    for group in sorted(groups):
+        files[f"waf-{group}.acl"] = "".join([
+            header,
+            f"# A pattern file: one regular expression to a line, matched on `{fetches[group]}`.\n",
+            f"# Loaded by `acl {_acl_name(group)}` in waf.cfg.\n\n",
+            *groups[group],
+        ])
 
-            if sanitized_pattern is None:  # Unsupported/invalid pattern
-                decisions.append(Decision(index, False, "operator-unsupported", next(
-                    (d for d in UNSUPPORTED_PATTERNS if d in pattern), pattern)))
-                continue
-
-            if acl_type == "hdr_reg":
-                # The expression goes to HAProxy as it is, and what its regular
-                # expression engine refuses is a configuration that does not load.
-                problem = dialects.check(HAProxy.capabilities.dialect, sanitized_pattern)
-                if problem:
-                    logger.warning(f"Skipping rule {rule_id}: the expression {problem}")
-                    decisions.append(Decision(index, False, "invalid-regex", problem))
-                    continue
-
-            if acl_type == "int": # Int comparison
-                action = "deny" if severity == "high" else "log" if severity == "medium" else "tarpit"
-                # Special cases: some locations cannot be used directly
-                if location in ("query-string", "request-uri"):
-                    int_rules.append(f"http-request {action} if {{ {location} {sanitized_pattern} }}")
-                else:
-                    int_rules.append(f"http-request {action} if {{ {location},{sanitized_pattern} }}")
-                decisions.append(Decision(index, True, location=location))
-
-            elif acl_type in ("hdr_reg", "hdr_sub"):  # String comparison
-                acl_name = f"block_{category}_{rule_id}"
-
-                # Build the ACL rule string
-                if location == "request-uri":
-                    acl_string = f"acl {acl_name} path_reg -i {sanitized_pattern}"
-                elif location == "query-string":
-                     # No direct query_reg in HAProxy.  Need to use path, url, or url_param
-                     acl_string = f"acl {acl_name} url_param_reg -i {sanitized_pattern}"
-                elif location in ("host", "content-type", "referer","user-agent"):
-                     hdr_func = "hdr_reg" if acl_type == "hdr_reg" else "hdr_sub"
-                     acl_string = f"acl {acl_name} {hdr_func}({location.replace('-','')}) -i {sanitized_pattern}"
-                else:
-                    logger.warning(f"Unsupported location: {location} for rule: {rule_id}")
-                    decisions.append(Decision(index, False, "location-unsupported", location))
-                    continue  # Skip unsupported locations
-
-                if location not in acl_rules:
-                    acl_rules[location] = []
-                acl_rules[location].append(acl_string)
-                decisions.append(Decision(
-                    index, True, location=location,
-                    pattern=sanitized_pattern if acl_type == "hdr_reg" else None))
-
-
-                if severity == "high":
-                    deny_high.append(acl_name)
-                elif severity == "medium":
-                    log_medium.append(acl_name)
-                elif severity == "low":
-                    tarpit_low.append(acl_name)
-
-        # Build the configuration
-        out: List[str] = [provenance_header(crs_ref, HAProxy.title), "# HAProxy WAF ACL rules\n\n"]
-
-        # Integer Comparison Rules (if any)
-        if int_rules:
-            out.append("# Integer Comparison Rules\n")
-            for rule in int_rules:
-                out.append(f"{rule}\n")
-            out.append("\n")
-
-        # ACL Rules (by location)
-        for location, rules in acl_rules.items():
-            out.append(f"# Rules for {location.title()}\n") # title()
-            for rule in rules:
-                out.append(f"{rule}\n")
-            out.append("\n")
-
-        # Deny/Action Logic
-        out.append("# Deny/Action Logic\n")
-        if deny_high:
-            out.append(f"http-request deny if {' or '.join(deny_high)}\n")
-        if log_medium:
-            out.append(f"http-request log if {' or '.join(log_medium)}\n")
-        if tarpit_low:
-            out.append(f"http-request tarpit if {' or '.join(tarpit_low)}\n")
-
-        return Compiled({"waf.acl": "".join(out)}, decisions)
-
-    except Exception as e:
-        logger.error(f"Error generating HAProxy configuration: {e}")
-        raise
+    cfg = [header,
+           "# Paste these lines into a `frontend` (or `listen`) section, and put the pattern files in\n"
+           f"# {WAF_DIR}/. HAProxy has no include, so this is not a file to load on its own.\n\n"]
+    for group in sorted(groups):
+        cfg.append(f"acl {_acl_name(group)} {fetches[group]} -m reg -f {WAF_DIR}/waf-{group}.acl\n")
+    if groups:
+        cfg.append("http-request deny deny_status 403 if "
+                   + " or ".join(_acl_name(g) for g in sorted(groups)) + "\n")
+    files["waf.cfg"] = "".join(cfg)
+    for group in sorted(groups):
+        logger.info(f"Generated waf-{group}.acl ({len(groups[group])} patterns)")
+    return Compiled(files, decisions)
 
 
 @register
@@ -194,28 +211,30 @@ class HAProxy(Backend):
     name = "haproxy"
     title = "HAProxy"
 
-    # ACLs: `hdr_reg`, `path_reg` and `url_param_reg` take a regular expression,
-    # and every one is written with `-i`, so the match ignores case. The operators
-    # OPERATOR_MAP translates one for one are the string comparisons; the numeric
-    # ones are written as comparisons against a request location, which is not
-    # what CRS compares (a transaction variable).
+    # What is written is what is declared, and tests/test_coverage.py holds one to the
+    # other. `url_dec(1)` is applied for `urlDecodeUni` and is not declared: it does not
+    # decode `%uXXXX`, which ModSecurity's does, so the matrix keeps the loss.
     capabilities = Capabilities(
         dialect="pcre",
-        operators=frozenset({"rx", "streq", "contains", "endsWith"}),
+        operators=frozenset({"rx"}),
         transformations=frozenset({"lowercase"}),
         case_insensitive=True,
         locations={
-            "request-uri": Target("path_reg", "the path: the query string is not part of it"),
+            "request-uri": Target("url", "the request URI as sent, with its query string"),
             "query-string": Target(
-                "url_param_reg", "query parameter values: not their names, not the request body",
-                frozenset({"ARGS", "ARGS_NAMES", "QUERY_STRING"})),
-            "user-agent": Target("hdr(useragent)"),
+                "query", "the whole query string, not each parameter's value: a pattern written "
+                         "for one value sees the others too; not the request body",
+                frozenset({"ARGS", "ARGS_NAMES"})),
+            "request-filename": Target(
+                "path", "the path as sent, before the normalisation ModSecurity's "
+                        "REQUEST_FILENAME has", frozenset({"REQUEST_FILENAME"})),
+            "user-agent": Target("hdr(user-agent)"),
             "host": Target("hdr(host)"),
             "referer": Target("hdr(referer)"),
-            "content-type": Target("hdr(contenttype)"),
+            "content-type": Target("hdr(content-type)"),
         },
-        faithful=without_handled_syntax,
+        faithful=modsecurity_unquote,
     )
 
     def compile(self, ir: IR) -> Compiled:
-        return generate_haproxy_conf(ir.rules, ir.crs_ref)
+        return generate_haproxy_waf(ir.rules, ir.crs_ref)

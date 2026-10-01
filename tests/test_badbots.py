@@ -149,8 +149,7 @@ entries = {
     "nginx": re.findall(r'^\s+"~\*(.*)" 1;$', (ROOT / "nginx" / "bots.conf").read_text(), re.M),
     "apache": [modsecurity_unquote(e) for e in re.findall(
         r'^SecRule REQUEST_HEADERS:User-Agent "@rx \(\?i\)(.*)" "id:', (ROOT / "apache" / "bots.conf").read_text(), re.M)],
-    "haproxy": re.findall(r"^acl bad_bot hdr_sub\(User-Agent\) -i (.*)$",
-                          (ROOT / "haproxy" / "bots.acl").read_text(), re.M),
+    "haproxy": [l for l in (ROOT / "haproxy" / "bots.acl").read_text().splitlines() if not l.startswith("#")],
 }
 if tomllib:
     toml_entries = tomllib.loads((ROOT / "traefik" / "bots.toml").read_text())[
@@ -191,18 +190,29 @@ check("the file does not set the engine: that is the deployment's",
       re.findall(r"SecRuleEngine", apache), [])
 check("every written rule says what it is, so a log line can be read", apache.count("msg:'bad bot'"), 5)
 
-print("HAProxy: one entry is one word")
-check("a space ends a word, so it is protected", badbots.haproxy_word("Ask Jeeves"), r"Ask\ Jeeves")
-check("and a tab", badbots.haproxy_word("a\tb"), "a\\\tb")
-check("a space a backslash already protects is not protected twice", badbots.haproxy_word(r"A\ B"), r"A\ B")
-check("an entry that starts with a space keeps it", badbots.haproxy_word(" YLT"), r"\ YLT")
-check("nothing else changes", badbots.haproxy_word(r"008\/"), r"008\/")
-acl_lines = [l for l in (REPO_ROOT / "waf_patterns" / "haproxy" / "bots.acl").read_text().splitlines()
-             if l.startswith("acl bad_bot")]
-check("the committed file is one acl line per entry", len(acl_lines) > 1000, True)
-check("and in none of them an entry is more than one word",
-      [l for l in acl_lines
-       if re.search(r"(?<!\\)[ \t]", l[len("acl bad_bot hdr_sub(User-Agent) -i "):])], [])
+print("HAProxy: a pattern file, one expression to a line")
+
+
+def haproxy_written(bots, left=()):
+    """What badbots writes to bots.acl."""
+    with tempfile.TemporaryDirectory() as tmp:
+        badbots.OUTPUT_DIRS["haproxy"] = tmp
+        badbots.generate_haproxy_conf(bots, left)
+        return (Path(tmp) / "bots.acl").read_text()
+
+
+haproxy = haproxy_written(["AhrefsBot", r"008\/", "Ask Jeeves", " YLT", "trail ", "#hash", "zq(xjk"])
+lines = [l for l in haproxy.splitlines() if not l.startswith("#")]
+check("an entry is a line, as it is: no quoting for the configuration parser to get wrong",
+      lines[:3], ["AhrefsBot", r"008\/", "Ask Jeeves"])
+check("a space at either end, and a `#` at the start, are written so HAProxy keeps them",
+      lines[3:6], [r"\ YLT", "trail\\ ", r"\#hash"])
+check("an entry PCRE cannot compile is left out, and said", "# Not written: zq(xjk" in haproxy, True)
+check("the header says how to load it", "-m reg -i -f /etc/haproxy/waf/bots.acl" in haproxy, True)
+check("no entry of the committed file is a line of configuration",
+      [l for l in entries["haproxy"] if l.startswith(("acl ", "http-request "))], [])
+check("and none has a space at either end that HAProxy would drop",
+      [l for l in entries["haproxy"] if l != l.strip() and not l.rstrip().endswith("\\")], [])
 
 print("the check real servers are held to")
 

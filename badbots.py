@@ -10,7 +10,7 @@ import re
 from tqdm import tqdm  # Import tqdm for progress bar
 
 from patterns import corpus, dialects
-from patterns.backends._common import modsecurity_quote, toml_string
+from patterns.backends._common import haproxy_pattern, modsecurity_quote, toml_string
 from patterns.backends.apache import BOT_ID_OFFSET
 from patterns.backends.traefik import PLUGIN
 
@@ -138,10 +138,10 @@ def matching_client(bot: str, wanted: dict):
     """
     The ordinary client an entry of the list would refuse, if there is one.
 
-    An entry is read the two ways a target might: as the regular expression the
-    source wrote, which is what nginx and Traefik do with it, and as the text it is
-    found in, which is what Apache's `@contains` and HAProxy's `hdr_sub` do. It is
-    left out if either one matches, since the list is written for all four.
+    An entry is a regular expression, as the sources wrote it and as all four targets
+    read it (nginx `~*`, Apache `@rx`, Traefik, HAProxy `-m reg`). One that is not a
+    regular expression Python can compile is read as the text it is, so it is left out
+    if it would match as text, whichever engine is stricter than the others.
 
     Args:
         bot: One entry of the list.
@@ -275,27 +275,30 @@ def generate_traefik_conf(bots, left_out=()):
     write_to_file(path, content)
 
 
-def haproxy_word(entry: str) -> str:
-    """
-    An entry as one word of an HAProxy configuration line.
-
-    A space ends a word, so `Ask Jeeves` was two patterns, `Ask` and `Jeeves`, and the
-    271 entries of the list that hold a space split into their words, among them `U`, `v`,
-    `-` and `+`: every browser matches one, and the list refused all of them. A space
-    that a backslash does not already protect is protected.
-    """
-    return re.sub(r"(?<!\\)([ \t])", r"\\\1", entry)
-
-
 def generate_haproxy_conf(bots, left_out=()):
     """
     Generate HAProxy WAF configuration for blocking bots.
+
+    `bots.acl` is a pattern file, as docs/haproxy.md says: one regular expression to a line,
+    which HAProxy reads as it stands, with no quoting to get wrong. It was a list of `acl`
+    lines, and a space ends a word in one: the 271 entries that hold a space were split
+    into their words, among them `U`, `v`, `-` and `+`, and used as a fragment the list
+    refused every browser (#78). It was also read as plain text (`hdr_sub`) where the
+    sources wrote regular expressions (#80). An entry PCRE cannot compile stops HAProxy
+    from loading the file, so it is left out, and said.
     """
     path = Path(OUTPUT_DIRS['haproxy'], "bots.acl")
-    content = "# HAProxy WAF - Bad Bot Blocker\n" + left_out_note(left_out)
+    content = ("# HAProxy WAF - Bad Bot Blocker\n"
+               "# A pattern file: one regular expression to a line. Load it with `-f` and `-i`:\n"
+               "#   acl bad_bot hdr(user-agent) -m reg -i -f /etc/haproxy/waf/bots.acl\n"
+               "#   http-request deny if bad_bot\n") + left_out_note(left_out)
     for bot in bots:
-        content += f'acl bad_bot hdr_sub(User-Agent) -i {haproxy_word(bot)}\n'
-    content += "http-request deny if bad_bot\n"
+        problem = dialects.check("pcre", bot)
+        if problem:
+            content += f"# Not written: {bot} {problem}\n"
+            logging.warning(f"HAProxy: leaving out {bot!r}: {problem}")
+        else:
+            content += haproxy_pattern(bot) + "\n"
     write_to_file(path, content)
 
 

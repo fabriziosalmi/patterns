@@ -146,8 +146,10 @@ Warning. Pattern match "(?:^([\\d.]+|\\[[\\da-f:]+\\]|[\\da-f:]+)(:[\\d]+)?$)" a
 Set `SecRuleEngine DetectionOnly` in your configuration, as above. To make a single rule record and not refuse:
 
 ```apache
-SecRuleUpdateActionById 9942160 "pass,log"
+SecRuleUpdateActionById 9941110 "pass,log"
 ```
+
+Put it after the `Include`: it changes a rule that is already defined. An attack often matches more than one rule (`<script>alert(1)</script>` matches 9941110 and then 9941160), and a rule that refused stops the others, so look at every id in the log before you conclude that a request would pass.
 
 ### Whitelist a path
 
@@ -161,8 +163,10 @@ Give the rule an id of your own: ids below 100000 are for local rules, so `1` do
 ### Disable a single rule
 
 ```apache
-SecRuleRemoveById 9942160
+SecRuleRemoveById 9941110
 ```
+
+Also after the `Include`, and with the same caution: the next rule that matches refuses.
 
 ## Testing
 

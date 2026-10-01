@@ -208,10 +208,9 @@ check("nginx: map keys in waf_maps.conf",
 check("apache: SecRule lines in the category files",
       sum(len(re.findall(r"^SecRule ", text, re.M)) for text in compiled["apache"].files.values()),
       written("apache"))
-acl = compiled["haproxy"].files["waf.acl"]
-check("haproxy: ACLs and comparisons in waf.acl",
-      len(re.findall(r"^acl ", acl, re.M))
-      + len(re.findall(r"^http-request (?:deny|log|tarpit) if \{", acl, re.M)),
+check("haproxy: patterns in the pattern files",
+      sum(len([l for l in text.splitlines() if l and not l.startswith("#")])
+          for name, text in compiled["haproxy"].files.items() if name.endswith(".acl")),
       written("haproxy"))
 check("traefik: expressions in middleware.toml",
       len(re.findall(r"^      ['\"]", compiled["traefik"].files["middleware.toml"], re.M)),
@@ -235,8 +234,10 @@ check("apache declares lowercase: a rule that declares it is written with t:lowe
 check("apache: and one that does not is written with t:none only",
       "t:none," in built("apache", rule())["test.conf"] and "t:lowercase" not in built("apache", rule())["test.conf"],
       True)
-check("haproxy declares case-insensitive: every ACL is written with -i",
-      " -i " in built("haproxy", lowered)["waf.acl"], True)
+check("haproxy declares lowercase: a rule that declares it is matched on the lowered value",
+      "query,lower -m reg" in built("haproxy", lowered)["waf.cfg"], True)
+check("haproxy: and one that does not is matched as it is",
+      "acl waf_query_string query -m reg" in built("haproxy", rule())["waf.cfg"], True)
 insensitive = rule(operator={"name": "rx", "negated": False, "argument": "(?i)zqxjk"},
                    pattern="@rx (?i)zqxjk", location="User-Agent")
 check("traefik declares it is: (?i) is kept, which Go honours",
@@ -357,6 +358,82 @@ check("quoting and reading a quoted argument are inverses",
 check("and what is written for a backslash is two, as Apache reads two as one",
       modsecurity_quote("a\\b"), "a\\\\b")
 
+print("what the HAProxy backend writes")
+haproxy_records = [(d, R.rules[d.index]) for d in compiled["haproxy"].decisions if d.emitted]
+check("haproxy writes only @rx, not negated, that refuses and is `high`",
+      sorted({(r["operator"]["name"], r["operator"]["negated"], r["severity"]) for _, r in haproxy_records}),
+      [("rx", False, "high")])
+cfg = compiled["haproxy"].files["waf.cfg"]
+pattern_files = {n: t for n, t in compiled["haproxy"].files.items() if n.endswith(".acl")}
+check("every acl of waf.cfg loads a pattern file that exists",
+      sorted(re.findall(r"-f /etc/haproxy/waf/(\S+)$", cfg, re.M)), sorted(pattern_files))
+check("and the one deny names them all, in a line HAProxy takes (64 words at most)",
+      (sorted(re.findall(r"^acl (\S+) ", cfg, re.M)) ==
+       sorted(re.search(r"^http-request deny deny_status 403 if (.*)$", cfg, re.M).group(1).split(" or "))
+       and len(re.search(r"^http-request deny .*$", cfg, re.M).group(0).split()) < 64), True)
+check("a pattern file is one expression to a line, after a comment that names the CRS rule",
+      sorted({len([l for l in t.splitlines() if l and not l.startswith("#")]) == t.count("# CRS ")
+              for t in pattern_files.values()}), [True])
+from patterns.backends._common import haproxy_pattern, modsecurity_unquote  # noqa: E402
+check("haproxy: every expression is written as the engine reads it: unquoted as Apache unquotes, (?i) kept",
+      [r["id"] for _, r in haproxy_records
+       if haproxy_pattern(modsecurity_unquote(r["operator"]["argument"])) not in
+       "".join(pattern_files.values()).splitlines()], [])
+
+
+def haproxy_decision(argument="zqxjk", name="rx", negated=False, **extra):
+    """What the HAProxy backend does with one rule made for the purpose."""
+    record = rule(operator={"name": name, "negated": negated, "argument": argument}, **extra)
+    one = backends.get("haproxy").compile(ir.IR(rules=[record]))
+    return (one.decisions[0].emitted, one.decisions[0].reason), one.files
+
+
+check("haproxy: a rule that is fine is written", haproxy_decision()[0], (True, None))
+check("a negated operator is not", haproxy_decision(negated=True)[0], (False, "operator-unsupported"))
+check("nor one that is not a regular expression", haproxy_decision("1", "lt")[0], (False, "operator-unsupported"))
+check("nor a record that is not a rule", haproxy_decision(directive="SecRuleUpdateTargetById")[0], (False, "not-a-rule"))
+check("nor an empty pattern", haproxy_decision("")[0], (False, "empty-pattern"))
+check("nor one PCRE does not compile", haproxy_decision("zq(xjk")[0], (False, "invalid-regex"))
+check("nor one with a line break: a pattern file holds a line to a pattern",
+      haproxy_decision("zq\nxjk")[0], (False, "invalid-regex"))
+check("nor one on a fetch it cannot check", haproxy_decision(location="Cookie")[0], (False, "location-unsupported"))
+check("nor one that does not refuse", haproxy_decision(action="pass")[0], (False, "not-blocking"))
+check("nor one below `high`: a pattern file cannot only record",
+      haproxy_decision(severity="medium")[0], (False, "severity-below-blocking"))
+check("nor one an ordinary request matches", haproxy_decision("Googlebot", location="User-Agent")[0],
+      (False, "matches-benign-traffic"))
+check("an argument is read the way Apache reads it before the check, as HAProxy reads the file",
+      haproxy_decision(r"\\(KHTML", location="User-Agent")[0], (False, "matches-benign-traffic"))
+check("a (?i) is kept and not turned into -i: PCRE has it",
+      "\n(?i)zqxjk\n" in haproxy_decision("(?i)zqxjk")[1]["waf-query-string.acl"]
+      and " -i " not in haproxy_decision("(?i)zqxjk")[1]["waf.cfg"], True)
+check("urlDecodeUni is url_dec(1), in a file of its own, named for it",
+      "acl waf_query_string_urldecode query,url_dec(1) -m reg -f /etc/haproxy/waf/waf-query-string-urldecode.acl"
+      in haproxy_decision(transformations=["urlDecodeUni"])[1]["waf.cfg"], True)
+check("and lowercase is lower, in the order the rule has them",
+      "query,lower,url_dec(1) " in haproxy_decision(transformations=["lowercase", "urlDecodeUni"])[1]["waf.cfg"]
+      and "query,url_dec(1),lower " in haproxy_decision(transformations=["urlDecodeUni", "lowercase"])[1]["waf.cfg"],
+      True)
+check("one HAProxy has no converter for is not applied, and is named by the matrix",
+      "acl waf_query_string query -m reg" in haproxy_decision(transformations=["htmlEntityDecode"])[1]["waf.cfg"],
+      True)
+check("the check against ordinary traffic decodes first, for a rule that decodes: `gr%C3%BC%C3%9Fe` is `grüße`",
+      (haproxy_decision("grüße", transformations=["urlDecodeUni"])[0], haproxy_decision("grüße")[0]),
+      ((False, "matches-benign-traffic"), (True, None)))
+check("and lowers first, for a rule that lowers",
+      (haproxy_decision("googlebot", location="User-Agent", transformations=["lowercase"])[0],
+       haproxy_decision("googlebot", location="User-Agent")[0]),
+      ((False, "matches-benign-traffic"), (True, None)))
+check("every file of a build with nothing to write is just waf.cfg",
+      sorted(backends.get("haproxy").compile(ir.IR(rules=[])).files), ["waf.cfg"])
+check("and it has no deny line that names nothing",
+      "http-request deny" in backends.get("haproxy").compile(ir.IR(rules=[])).files["waf.cfg"], False)
+check("a pattern file line: a leading or trailing space, tab or leading # is written escaped",
+      [haproxy_pattern(v) for v in (" a", "a ", "\ta", "a\t", "#a", "a#b", "a b")],
+      ["\\ a", "a\\ ", "\\\ta", "a\\\t", "\\#a", "a#b", "a b"])
+check("one that is escaped already is not escaped twice, and one that is not, with a backslash before it, is",
+      [haproxy_pattern(v) for v in ("a\\ ", "a\\\\ ")], ["a\\ ", "a\\\\\\ "])
+
 try:
     import tomllib
 except ImportError:  # before 3.11
@@ -384,7 +461,7 @@ check("what each backend declares it can express is what is shown above and noth
       {"nginx": ("pcre", ["rx"], ["lowercase"], True),
        "apache": ("pcre", ["rx"], ["lowercase"], True),
        "traefik": ("re2", ["rx"], [], True),
-       "haproxy": ("pcre", ["contains", "endsWith", "rx", "streq"], ["lowercase"], True)})
+       "haproxy": ("pcre", ["rx"], ["lowercase"], True)})
 check("every location a backend wrote a regular expression on is one it declares",
       {n: sorted({d.location for d in compiled[n].decisions if d.emitted and d.pattern}
                  - set(backends.get(n).capabilities.locations)) for n in compiled},

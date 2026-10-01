@@ -142,7 +142,8 @@ python json2haproxy.py
 
 **Generated files**:
 
-- `waf.acl` &mdash; one regex per line, designed for `-f /etc/haproxy/waf.acl`
+- `waf.cfg` &mdash; the `acl` lines that load the pattern files, and one `deny`, to paste into a `frontend`
+- `waf-<where>[-<converters>].acl` &mdash; pattern files: one regex per line, loaded with `-m reg -f`
 - `README.md` &mdash; in-tree integration notes
 
 | Env var | Default |

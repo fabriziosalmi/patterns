@@ -261,7 +261,7 @@ jobs:
         NGINX_BOTS=$(grep -c '^\s*"~' waf_patterns/nginx/bots.conf || echo 0)
         APACHE_BOTS=$(grep -c '^SecRule REQUEST_HEADERS' waf_patterns/apache/bots.conf || echo 0)
         TRAEFIK_BOTS=$(grep -cE "^\s+['\"]" waf_patterns/traefik/bots.toml || echo 0)
-        HAPROXY_BOTS=$(grep -c '^acl' waf_patterns/haproxy/bots.acl || echo 0)
+        HAPROXY_BOTS=$(grep -vc '^#' waf_patterns/haproxy/bots.acl || echo 0)
 
         # Archive sizes (human-readable)
         NGINX_SIZE=$(du -h dist/nginx_waf.zip | cut -f1)
@@ -300,7 +300,7 @@ jobs:
         | Nginx    | \`map\` + \`if\`      | ${NGINX_BOTS}   | \`nginx_waf.zip\`     | ${NGINX_SIZE}    |
         | Apache   | ModSecurity       | ${APACHE_BOTS}   | \`apache_waf.zip\`    | ${APACHE_SIZE}    |
         | Traefik  | Middleware TOML   | ${TRAEFIK_BOTS}   | \`traefik_waf.zip\`   | ${TRAEFIK_SIZE}    |
-        | HAProxy  | ACL               | ${HAPROXY_BOTS}   | \`haproxy_waf.zip\`   | ${HAPROXY_SIZE}    |
+        | HAProxy  | Pattern files     | ${HAPROXY_BOTS}   | \`haproxy_waf.zip\`   | ${HAPROXY_SIZE}    |
 
         ### Quick install
 

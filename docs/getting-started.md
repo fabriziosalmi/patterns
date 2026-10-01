@@ -21,13 +21,11 @@ The fastest path. A scheduled GitHub Actions workflow builds every archive each 
 | `nginx_waf.zip` | `waf_maps.conf`, `waf_rules.conf`, `bots.conf` | Nginx |
 | `apache_waf.zip` | Per-category ModSecurity `.conf` files, `bots.conf` | Apache + mod_security2 |
 | `traefik_waf.zip` | `middleware.toml`, `bots.toml` | Traefik (file provider) |
-| `haproxy_waf.zip` | `waf.acl`, `bots.acl` | HAProxy |
+| `haproxy_waf.zip` | `waf.cfg`, pattern files `waf-*.acl`, `bots.acl` | HAProxy |
 
 Pick one, extract, then jump to the matching integration guide.
 
-::: warning The HAProxy output does not load today
-HAProxy refuses the generated files in its real server ([#67](https://github.com/fabriziosalmi/patterns/issues/67), [#68](https://github.com/fabriziosalmi/patterns/issues/68)); nginx, Apache and Traefik load them. Each integration guide says what to expect at the top, and [Coverage](/coverage) says what every target does with every rule.
-:::
+Each integration guide says what its target can and cannot do at the top, and [Coverage](/coverage) says what every target does with every rule.
 
 Releases are dated and never replaced, and every file is signed: [verify a release](/verify) before you deploy it.
 
@@ -64,7 +62,7 @@ waf_patterns/
 ├── nginx/      # waf_maps.conf, waf_rules.conf, bots.conf
 ├── apache/     # sqli.conf, xss.conf, rce.conf, lfi.conf, … bots.conf
 ├── traefik/    # middleware.toml, bots.toml
-└── haproxy/    # waf.acl, bots.acl
+└── haproxy/    # waf.cfg, waf-*.acl, bots.acl
 ```
 
 ## Next steps

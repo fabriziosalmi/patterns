@@ -171,10 +171,10 @@ try:
     code, out, _ = patterns("build", "--all", "--out", str(stale), "--check")
     check("a file edited by hand is reported", (code, "differs: " + str(stale / "nginx" / "waf_maps.conf") in out), (1, True))
     shutil.copy(out_a / "nginx" / "waf_maps.conf", stale / "nginx" / "waf_maps.conf")
-    (stale / "haproxy" / "waf.acl").unlink()
+    (stale / "haproxy" / "waf.cfg").unlink()
     code, out, _ = patterns("build", "--all", "--out", str(stale), "--check")
-    check("a file that is gone is reported", (code, "missing: " + str(stale / "haproxy" / "waf.acl") in out), (1, True))
-    check("--check writes nothing", (stale / "haproxy" / "waf.acl").exists(), False)
+    check("a file that is gone is reported", (code, "missing: " + str(stale / "haproxy" / "waf.cfg") in out), (1, True))
+    check("--check writes nothing", (stale / "haproxy" / "waf.cfg").exists(), False)
 
     print("the same files every time")
     by_seed = {}

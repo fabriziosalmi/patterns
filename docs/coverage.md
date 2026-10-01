@@ -12,30 +12,27 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 | Nginx | 12 | 156 | 0 | 581 |
 | Apache (ModSecurity) | 9 | 170 | 0 | 570 |
 | Traefik | 0 | 3 | 0 | 746 |
-| HAProxy | 2 | 97 | 403 | 247 |
+| HAProxy | 6 | 171 | 0 | 572 |
 
 **Why a record is dropped**, by the first reason the backend found:
 
 | Reason | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
 |---|---:|---:|---:|---:|
-| matched on a request component the target does not have | 96 | 93 | 685 | 160 |
-| an operator the backend cannot express | 398 | 398 | 2 | 31 |
+| an operator the backend cannot express | 398 | 398 | 2 | 398 |
+| matched on a request component the target does not have | 96 | 93 | 685 | 93 |
 | not a rule: it changes another rule | 54 | 54 | 54 | 54 |
-| it refuses ordinary traffic once converted | 13 | 21 |  |  |
+| it refuses ordinary traffic once converted | 13 | 21 |  | 15 |
 | longer than the target accepts | 16 |  |  |  |
-| it records and does not refuse | 4 | 4 |  |  |
-| its severity is below what refuses, and the target cannot only record |  |  | 5 |  |
-| the expression does not compile |  |  |  | 2 |
+| its severity is below what refuses, and the target cannot only record |  |  | 5 | 8 |
+| it records and does not refuse | 4 | 4 |  | 4 |
 
 **What a written rule loses**, in how many of them:
 
 | Loss | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
 |---|---:|---:|---:|---:|
-| matched on other variables than the rule names | 149 | 164 | 3 | 480 |
-| transformations the rule was written to run after are not applied | 115 | 116 | 2 | 136 |
-| an operator written as something it is not |  |  |  | 301 |
-| the expression was rewritten |  |  |  | 100 |
-| a chain written without all of its links | 13 | 10 |  | 56 |
+| matched on other variables than the rule names | 149 | 164 | 3 | 168 |
+| transformations the rule was written to run after are not applied | 115 | 116 | 2 | 115 |
+| a chain written without all of its links | 13 | 10 |  | 11 |
 <!-- coverage:end -->
 
 The numbers are counted on the records of the [intermediate representation](/ir), which include the links of a chain and the `SecRuleUpdateTargetById` directives, so they are a little more than the number of CRS rules. [`coverage.json`](https://github.com/fabriziosalmi/patterns/blob/main/waf_patterns/coverage.json) holds the verdict for each record, and is published with every release.
@@ -58,7 +55,7 @@ The numbers are counted on the records of the [intermediate representation](/ir)
 
 ## Does it load?
 
-Whether a rule is written, and whether the server accepts what was written, are different questions. Each target is also run through its real server with the same corpus of ordinary and hostile requests: [Apache with ModSecurity](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_apache_blocking.py), [HAProxy](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_haproxy_blocking.py) and [Traefik](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_traefik_blocking.py), and nginx by [its own test](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_nginx_blocking.py). The [README](https://github.com/fabriziosalmi/patterns#does-it-load) says what they found. Where a target does not load, the test records the known state and the issue that tracks it, and fails the day that changes. Today nginx, Apache and Traefik load what is generated; HAProxy does not.
+Whether a rule is written, and whether the server accepts what was written, are different questions. Each target is also run through its real server with the same corpus of ordinary and hostile requests: [Apache with ModSecurity](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_apache_blocking.py), [HAProxy](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_haproxy_blocking.py) and [Traefik](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_traefik_blocking.py), and nginx by [its own test](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_nginx_blocking.py). The [README](https://github.com/fabriziosalmi/patterns#does-it-load) says what they found. Where a target does not load, the test records the known state and the issue that tracks it, and fails the day that changes. Today all four load what is generated.
 
 ## Regular expression dialects
 

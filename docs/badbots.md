@@ -18,7 +18,7 @@ A source that cannot be fetched is skipped. If none can, the script stops with a
 | Nginx | `bots.conf` | `map $http_user_agent $bad_bot` |
 | Apache | `bots.conf` | One ModSecurity `SecRule` (`@rx`) per entry, each with an id of its own |
 | Traefik | `bots.toml` | Middleware regex replacements |
-| HAProxy | `bots.acl` | One `acl` line per entry |
+| HAProxy | `bots.acl` | A pattern file: one regular expression to a line, for `-m reg -i -f` |
 
 ## Nginx
 
@@ -61,7 +61,7 @@ Include /etc/apache2/waf_patterns/apache/bots.conf
 ## HAProxy
 
 ```haproxy
-acl bad_bot hdr(User-Agent) -m reg -i -f /etc/haproxy/bots.acl
+acl bad_bot hdr(user-agent) -m reg -i -f /etc/haproxy/waf/bots.acl
 http-request deny deny_status 403 if bad_bot
 ```
 
@@ -121,10 +121,6 @@ The nginx, Apache, Traefik and HAProxy tests start the real server with the writ
 **HTTP libraries are refused on purpose.** `curl`, `python-requests` and `Go-http-client` are in the list, and a request that carries one of them as its User-Agent gets a 403, an ordinary one too. The first thing a scraper does is run one of them with its default agent, and that is what the list is for. If you serve an API to scripts, or monitor the site with `curl`, remove the entry, or whitelist the agent as below.
 
 Because the list now has fewer entries, a bot that only the catch-all caught is let through. The specific names the sources list are still refused.
-
-::: warning What HAProxy reads
-HAProxy reads an entry as plain text (`hdr_sub`) where the sources wrote regular expressions, so an entry like `008\/` never matches `008/`. It is tracked in [#80](https://github.com/fabriziosalmi/patterns/issues/80). HAProxy's `bots.acl` is a list of `acl` lines, so it loads as part of a `frontend`; as a pattern file, which is how the HAProxy page loads it, it matches nothing ([#68](https://github.com/fabriziosalmi/patterns/issues/68)).
-:::
 
 ## Customization
 

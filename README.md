@@ -102,30 +102,27 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 | Nginx | 12 | 156 | 0 | 581 |
 | Apache (ModSecurity) | 9 | 170 | 0 | 570 |
 | Traefik | 0 | 3 | 0 | 746 |
-| HAProxy | 2 | 97 | 403 | 247 |
+| HAProxy | 6 | 171 | 0 | 572 |
 
 **Why a record is dropped**, by the first reason the backend found:
 
 | Reason | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
 |---|---:|---:|---:|---:|
-| matched on a request component the target does not have | 96 | 93 | 685 | 160 |
-| an operator the backend cannot express | 398 | 398 | 2 | 31 |
+| an operator the backend cannot express | 398 | 398 | 2 | 398 |
+| matched on a request component the target does not have | 96 | 93 | 685 | 93 |
 | not a rule: it changes another rule | 54 | 54 | 54 | 54 |
-| it refuses ordinary traffic once converted | 13 | 21 |  |  |
+| it refuses ordinary traffic once converted | 13 | 21 |  | 15 |
 | longer than the target accepts | 16 |  |  |  |
-| it records and does not refuse | 4 | 4 |  |  |
-| its severity is below what refuses, and the target cannot only record |  |  | 5 |  |
-| the expression does not compile |  |  |  | 2 |
+| its severity is below what refuses, and the target cannot only record |  |  | 5 | 8 |
+| it records and does not refuse | 4 | 4 |  | 4 |
 
 **What a written rule loses**, in how many of them:
 
 | Loss | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
 |---|---:|---:|---:|---:|
-| matched on other variables than the rule names | 149 | 164 | 3 | 480 |
-| transformations the rule was written to run after are not applied | 115 | 116 | 2 | 136 |
-| an operator written as something it is not |  |  |  | 301 |
-| the expression was rewritten |  |  |  | 100 |
-| a chain written without all of its links | 13 | 10 |  | 56 |
+| matched on other variables than the rule names | 149 | 164 | 3 | 168 |
+| transformations the rule was written to run after are not applied | 115 | 116 | 2 | 115 |
+| a chain written without all of its links | 13 | 10 |  | 11 |
 <!-- coverage:end -->
 
 The nginx figures above are measured on the rules in its row here. The table is
@@ -138,14 +135,20 @@ Every target has been run through its real server with the same corpus, by
 [`tests/test_nginx_blocking.py`](tests/test_nginx_blocking.py),
 [`tests/test_traefik_blocking.py`](tests/test_traefik_blocking.py),
 [`tests/test_apache_blocking.py`](tests/test_apache_blocking.py) and
-[`tests/test_haproxy_blocking.py`](tests/test_haproxy_blocking.py). **nginx, Apache
-and Traefik load what is generated. HAProxy does not:**
+[`tests/test_haproxy_blocking.py`](tests/test_haproxy_blocking.py). **All four load what
+is generated, and none of them refuses an ordinary request of the corpus.** Two of them
+did not until recently:
 
-| Target | What the server says | |
-|---|---|---|
-| HAProxy | `unmatched quote`, and fetches that do not exist, however the file is loaded | [#67](https://github.com/fabriziosalmi/patterns/issues/67), [#68](https://github.com/fabriziosalmi/patterns/issues/68) |
+HAProxy did not load however its file was used ([#67](https://github.com/fabriziosalmi/patterns/issues/67),
+[#68](https://github.com/fabriziosalmi/patterns/issues/68)): the rules were `acl` lines with
+expressions HAProxy's parser takes for unmatched quotes, a fetch it does not have and one line of
+hundreds of names, documented as a pattern file that it was not. It is now what was
+documented: pattern files, which HAProxy reads a regular expression to a line, and a
+`waf.cfg` to paste into a `frontend`. The test runs it in a real HAProxy: of the 21
+attacks, 15 are refused in clear and 10 percent-encoded (`url_dec`), and 0 of the 122
+ordinary requests.
 
-Apache was in that table until [#55](https://github.com/fabriziosalmi/patterns/issues/55):
+Apache was not loading until [#55](https://github.com/fabriziosalmi/patterns/issues/55):
 it wrote the operators CRS names as if they were patterns, after `re.escape` had turned
 them into other patterns (`Failed to resolve operator: lt\`), and its bad-bot list gave
 every rule the same id ([#80](https://github.com/fabriziosalmi/patterns/issues/80)). It
@@ -172,7 +175,7 @@ tested before it has anything real to measure.
 | | |
 |---|---|
 | **OWASP CRS coverage** | SQLi, XSS, RCE, LFI, RFI, plus generic anomaly and protocol-violation rules. |
-| **Native output** | Nginx `map`/`if`, Apache `SecRule`, Traefik middleware TOML, HAProxy ACL files. |
+| **Native output** | Nginx `map`/`if`, Apache `SecRule`, Traefik middleware TOML, HAProxy pattern files. |
 | **Bad-bot blocking** | User-Agent lists from public sources. Search engines, link previews and uptime monitors are left out of them, and the nginx, Apache, Traefik and HAProxy tests check it in the real server. HTTP libraries (`curl`, `python-requests`) are refused on purpose. |
 | **Nightly, tested** | A scheduled GitHub Actions workflow rebuilds every backend, runs the tests on the result, and publishes only if they pass and something changed. |
 | **Pre-built, signed archives** | Skip the toolchain &mdash; download `nginx_waf.zip`, `apache_waf.zip`, `traefik_waf.zip`, or `haproxy_waf.zip` from a dated release that is never replaced, and [verify it](https://fabriziosalmi.github.io/patterns/verify). |
@@ -191,8 +194,7 @@ curl -LO https://github.com/fabriziosalmi/patterns/releases/latest/download/ngin
 unzip nginx_waf.zip -d /etc/nginx/waf_patterns
 ```
 
-> **The HAProxy output does not load today.** HAProxy refuses the generated files in
-> its real server; nginx, Apache and Traefik load them: see [Does it load?](#does-it-load). Releases are
+> Every target loads in its real server: see [Does it load?](#does-it-load). Releases are
 > dated (`2026-10-01-crs-v4.29.0`), never replaced and signed; [verify one](https://fabriziosalmi.github.io/patterns/verify)
 > before you deploy it, or pin to it with `releases/download/<tag>/`.
 
@@ -304,9 +306,12 @@ http:
 ```haproxy
 frontend http-in
     bind *:80
-    acl waf_match path,url_dec -m reg -i -f /etc/haproxy/waf.acl
-    acl bad_bot   hdr(User-Agent) -m reg -i -f /etc/haproxy/bots.acl
-    http-request deny deny_status 403 if waf_match || bad_bot
+    # the lines of waf.cfg: an acl for each pattern file, and one deny
+    acl waf_query_string_urldecode query,url_dec(1) -m reg -f /etc/haproxy/waf/waf-query-string-urldecode.acl
+    http-request deny deny_status 403 if waf_query_string_urldecode
+    # the bad-bot list, a pattern file
+    acl bad_bot hdr(user-agent) -m reg -i -f /etc/haproxy/waf/bots.acl
+    http-request deny deny_status 403 if bad_bot
 ```
 
 Full guides &mdash; with logging, whitelists, and tuning &mdash; live in the [docs](https://fabriziosalmi.github.io/patterns/).

@@ -37,7 +37,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from patterns import dialects
 from patterns.backends import Backend, Capabilities, Compiled, Decision, Target, register
-from patterns.backends._common import modsecurity_unquote, operator_of, provenance_header
+from patterns.backends._common import ascii_lower, modsecurity_unquote, operator_of, provenance_header
 from patterns.corpus import arguments, first_ordinary_match
 from patterns.ir import IR
 
@@ -59,11 +59,6 @@ RECORD = "pass,log"
 SEVERITY = {"high": "CRITICAL", "medium": "WARNING", "low": "NOTICE"}
 
 BLOCKING_ACTIONS = ("block", "deny", "drop")
-
-
-def _ascii_lower(value: str) -> str:
-    """What ModSecurity's `t:lowercase` does: ASCII only, as C's tolower does."""
-    return "".join(c.lower() if c < "\x80" else c for c in value)
 
 
 def _path(entry: Dict[str, str]) -> List[str]:
@@ -132,7 +127,7 @@ def _write(index: int, rule: Dict) -> Tuple[Decision, Optional[str]]:
     variable, field, view = LOCATIONS[location]
     lowered = "lowercase" in (rule.get("transformations") or [])
     values = view or (lambda entry: [entry[field]])
-    seen = (lambda entry: [_ascii_lower(v) for v in values(entry)]) if lowered else values
+    seen = (lambda entry: [ascii_lower(v) for v in values(entry)]) if lowered else values
     ordinary = first_ordinary_match(expression, field, False, seen)
     if ordinary is not None:
         return Decision(index, False, "matches-benign-traffic", ordinary), None

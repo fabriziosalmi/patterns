@@ -82,6 +82,30 @@ def modsecurity_unquote(text: str) -> str:
     return re.sub(r'\\(["\\])', r"\1", text)
 
 
+def ascii_lower(value: str) -> str:
+    """What `t:lowercase` in ModSecurity and `lower` in HAProxy do: ASCII only, as C's tolower does."""
+    return "".join(c.lower() if c < "\x80" else c for c in value)
+
+
+def haproxy_pattern(expression: str) -> str:
+    """
+    One regular expression as a line of an HAProxy pattern file.
+
+    HAProxy reads the file a line at a time, takes each line for a pattern as it stands (no
+    quoting, so `#` in the middle and any length are fine) and drops what it would drop of a
+    line: blank space at either end, and a line that starts with `#`. A pattern that begins
+    or ends with a space, or begins with `#`, would become another pattern, so that
+    character is written with the backslash PCRE gives it to mean itself.
+    """
+    if expression[:1] in (" ", "\t", "#"):
+        expression = "\\" + expression
+    if expression[-1:] in (" ", "\t"):
+        slashes = len(expression) - len(expression[:-1].rstrip("\\"))  - 1
+        if slashes % 2 == 0:  # an even number of backslashes before it: it is not escaped yet
+            expression = expression[:-1] + "\\" + expression[-1]
+    return expression
+
+
 def without_handled_syntax(argument: str) -> str:
     """
     What a regular expression is once the syntax a backend handles another way
