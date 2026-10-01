@@ -295,6 +295,33 @@ for name, location in (("nginx", "Content-Type"), ("apache", "CONTENT-TYPE"), ("
         pattern="@rx zqxjk")])).decisions[0]
     check(f"{name}: and the same rule outside a chain is", alone.emitted, True)
 
+print("the order of the keys of a map")
+SEVERITY_RANK = {"high": 0, "medium": 1, "low": 2}
+real_maps = compiled["nginx"].files["waf_maps.conf"]
+by_map = {}
+current = None
+for line in real_maps.splitlines():
+    start = re.match(r"map (\S+) (\S+) \{", line)
+    if start:
+        current = start.group(2)
+        by_map[current] = []
+    elif current and re.match(r'  "~', line):
+        by_map[current].append(SEVERITY_RANK[re.search(r'"(high|medium|low):[a-z_]+";$', line).group(1)])
+check("in every map the high keys come before the medium ones and those before the low ones: nginx takes the "
+      "first key that matches, and only a high one refuses",
+      [m for m, ranks in by_map.items() if ranks != sorted(ranks)], [])
+ordered = backends.get("nginx").compile(ir.IR(rules=[
+    rule("1", severity="medium", pattern="@rx zqxjk", operator={"name": "rx", "negated": False, "argument": "zqxjk"}),
+    rule("2", severity="high", pattern="@rx zqxjk.*attack",
+         operator={"name": "rx", "negated": False, "argument": "zqxjk.*attack"})])).files["waf_maps.conf"]
+check("a medium rule that comes first in CRS is written after the high one that comes second",
+      ordered.index("high:test") < ordered.index("medium:test"), True)
+check("and two of the same severity keep the order CRS has them in",
+      (lambda text: text.index("zqxjkb") < text.index("zqxjka"))(backends.get("nginx").compile(ir.IR(rules=[
+          rule("1", pattern="@rx zqxjkb", operator={"name": "rx", "negated": False, "argument": "zqxjkb"}),
+          rule("2", pattern="@rx zqxjka", operator={"name": "rx", "negated": False, "argument": "zqxjka"})])
+      ).files["waf_maps.conf"]), True)
+
 print("what the nginx backend writes for a list of phrases")
 from patterns.backends import nginx as nginx_backend  # noqa: E402
 from patterns.corpus import nginx_uri  # noqa: E402

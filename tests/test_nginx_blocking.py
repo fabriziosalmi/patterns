@@ -119,6 +119,52 @@ def send(entry) -> int:
     return conformance.send(PORT, entry)
 
 
+def synthetic_rule(rule_id: str, argument: str, severity: str) -> dict:
+    """A rule on the query string, as the IR holds one, for a check that needs two that overlap."""
+    return {"id": rule_id, "directive": "SecRule", "category": "TEST", "phase": 2,
+            "variables": [{"name": "QUERY_STRING", "selector": None, "count": False, "excluded": False}],
+            "operator": {"name": "rx", "negated": False, "argument": argument}, "transformations": [],
+            "action": "block", "severity": severity, "crs_severity": "CRITICAL", "score": None,
+            "chain": None, "target_rule_id": None, "pattern": "@rx " + argument, "location": "Query-String"}
+
+
+def key_order() -> int:
+    """
+    nginx takes the first key of a map that matches, and `if ($waf_x ~ "^high")` reads what that
+    key said. A `medium` key ahead of a `high` one that matches the same value made the request
+    pass: the high rule was in the file and never spoke. Two rules that overlap, the medium one
+    first as CRS has them, go through the real nginx.
+
+    Returns:
+        The number of failures.
+    """
+    from patterns import backends, ir  # here: the rest of this file reads the generated files
+    files = backends.get("nginx").compile(ir.IR(rules=[
+        synthetic_rule("1", "zqxjk", "medium"), synthetic_rule("2", "zqxjk.*attack", "high")])).files
+    print("\nthe order of the keys of a map, in nginx")
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        (work / "maps.conf").write_text(files["waf_maps.conf"])
+        (work / "rules.conf").write_text(files["waf_rules.conf"])
+        conf = work / "nginx.conf"
+        conf.write_text(wrap(work / "maps.conf", work / "rules.conf", work))
+        started = subprocess.run(["nginx", "-c", str(conf), "-p", str(work)], capture_output=True, text=True)
+        if started.returncode != 0:
+            print(f"  FAIL  nginx would not start: {started.stderr.strip()}")
+            return 1
+        try:
+            time.sleep(1)
+            from patterns.corpus import request  # noqa: E402
+            status = send(request("a value that a medium rule and a high rule both match", "/", "q=zqxjk+attack"))
+        finally:
+            subprocess.run(["nginx", "-s", "stop", "-c", str(conf), "-p", str(work)], capture_output=True)
+    if status != 403:
+        print(f"  FAIL  a value that a high rule matches was answered {status}: a medium key written first hid it")
+        return 1
+    print("  ok    a value that a high rule matches is refused, though a medium key comes first in CRS")
+    return 0
+
+
 def main() -> int:
     if shutil.which("nginx") is None:
         print("nginx is not on PATH: cannot exercise the generated configuration.")
@@ -158,7 +204,7 @@ def main() -> int:
             subprocess.run(["nginx", "-s", "stop", "-c", str(conf), "-p", str(workdir)],
                            capture_output=True)
 
-    failures = bots.failures
+    failures = bots.failures + key_order()
 
     print(f"\nordinary traffic ({len(BENIGN)} requests)")
     if refused_benign:

@@ -122,6 +122,10 @@ def is_case_insensitive(pattern: str, transformations: List[str]) -> bool:
 # there produces a key that passes this check and takes the file down.
 NGINX_MAX_PARAMETER = 4095
 
+# The severities a map entry can have, in the order its keys have to be written in: a map takes
+# the first key that matches, and only a `high` one refuses.
+SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+
 # The request component each rule location is matched against.
 LOCATION_VARIABLES = {
     # `$uri` is the path percent-decoded and normalised by nginx, which is the
@@ -300,8 +304,8 @@ def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest",
     """Builds the Nginx WAF configuration: maps, rules and a README."""
     data_files = data_files or {}
 
-    # source variable -> list of "key value" map entries
-    entries_by_variable: Dict[str, List[str]] = defaultdict(list)
+    # source variable -> "key value" map entries, each with its severity: see SEVERITY_ORDER
+    entries_by_variable: Dict[str, List[Tuple[int, str]]] = defaultdict(list)
     severities_seen: set = set()
     skipped_too_long = 0
     skipped_not_blocking = 0
@@ -400,7 +404,8 @@ def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest",
         severities_seen.add(severity)
         value = f'"{severity}:{_sanitize_name(category)}"'
         for key in keys:
-            entries_by_variable[variable].append(f"  {key} {value};")
+            entries_by_variable[variable].append((SEVERITY_ORDER.get(severity, len(SEVERITY_ORDER)),
+                                                  f"  {key} {value};"))
         decisions.append(Decision(index, True, location=location, pattern="|".join(patterns),
                                   keys=len(keys)))
 
@@ -447,7 +452,12 @@ def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest",
         name = _map_variable(variable)
         maps.append(f"map {variable} {name} {{\n")
         maps.append('  default "";\n')
-        maps.append("\n".join(entries_by_variable[variable]))
+        # nginx takes the first key that matches, and `if ($waf_x ~ "^high")` reads what that
+        # key said. A `medium` key ahead of a `high` one that matches the same value turns it
+        # into a request that passes: the high rule is there and never speaks. So the
+        # keys are in severity order, and the order of CRS within a severity. Verified against
+        # nginx: with the medium key first `zqxjk attack` is a 200, with the high one first a 403.
+        maps.append("\n".join(line for _, line in sorted(entries_by_variable[variable], key=lambda e: e[0])))
         maps.append("\n}\n\n")
 
 

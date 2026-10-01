@@ -79,7 +79,7 @@ if ($waf_args ~ "^high") {
 }
 ```
 
-Nginx checks the keys of a regular-expression `map` in the order they appear and takes the first that matches. The cost of a lookup therefore grows with the number of keys, which is a few dozen per variable, not a constant. Measure it on your own traffic before you rely on it staying out of your latency.
+Nginx checks the keys of a regular-expression `map` in the order they appear and takes the first that matches. So the keys are written with the `high` ones first: a `medium` key ahead of a `high` one that matches the same value would answer for it, and the request would pass with a refusing rule in the file. The cost of a lookup therefore grows with the number of keys, which is a few dozen per variable, not a constant. Measure it on your own traffic before you rely on it staying out of your latency.
 
 ## Customization
 
