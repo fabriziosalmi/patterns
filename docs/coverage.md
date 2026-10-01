@@ -10,7 +10,7 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 | Target | Full | Approximate | Unsound | Dropped |
 |---|---:|---:|---:|---:|
 | Nginx | 12 | 156 | 0 | 581 |
-| Apache (ModSecurity) | 0 | 1 | 712 | 36 |
+| Apache (ModSecurity) | 9 | 170 | 0 | 570 |
 | Traefik | 0 | 3 | 0 | 746 |
 | HAProxy | 2 | 97 | 403 | 247 |
 
@@ -18,25 +18,24 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 
 | Reason | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
 |---|---:|---:|---:|---:|
-| matched on a request component the target does not have | 96 |  | 685 | 160 |
-| an operator the backend cannot express | 398 | 21 | 2 | 31 |
-| not a rule: it changes another rule | 54 |  | 54 | 54 |
-| the expression does not compile |  | 15 |  | 2 |
+| matched on a request component the target does not have | 96 | 93 | 685 | 160 |
+| an operator the backend cannot express | 398 | 398 | 2 | 31 |
+| not a rule: it changes another rule | 54 | 54 | 54 | 54 |
+| it refuses ordinary traffic once converted | 13 | 21 |  |  |
 | longer than the target accepts | 16 |  |  |  |
-| it refuses ordinary traffic once converted | 13 |  |  |  |
+| it records and does not refuse | 4 | 4 |  |  |
 | its severity is below what refuses, and the target cannot only record |  |  | 5 |  |
-| it records and does not refuse | 4 |  |  |  |
+| the expression does not compile |  |  |  | 2 |
 
 **What a written rule loses**, in how many of them:
 
 | Loss | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
 |---|---:|---:|---:|---:|
-| matched on other variables than the rule names | 149 | 633 | 3 | 480 |
-| an operator written as something it is not |  | 373 |  | 301 |
-| transformations the rule was written to run after are not applied | 115 | 184 | 2 | 136 |
-| the expression was rewritten |  | 281 |  | 100 |
-| a chain written without all of its links | 13 | 121 |  | 56 |
-| written although it is not a rule |  | 54 |  |  |
+| matched on other variables than the rule names | 149 | 164 | 3 | 480 |
+| transformations the rule was written to run after are not applied | 115 | 116 | 2 | 136 |
+| an operator written as something it is not |  |  |  | 301 |
+| the expression was rewritten |  |  |  | 100 |
+| a chain written without all of its links | 13 | 10 |  | 56 |
 <!-- coverage:end -->
 
 The numbers are counted on the records of the [intermediate representation](/ir), which include the links of a chain and the `SecRuleUpdateTargetById` directives, so they are a little more than the number of CRS rules. [`coverage.json`](https://github.com/fabriziosalmi/patterns/blob/main/waf_patterns/coverage.json) holds the verdict for each record, and is published with every release.
@@ -59,7 +58,7 @@ The numbers are counted on the records of the [intermediate representation](/ir)
 
 ## Does it load?
 
-Whether a rule is written, and whether the server accepts what was written, are different questions. Each target is also run through its real server with the same corpus of ordinary and hostile requests: [Apache with ModSecurity](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_apache_blocking.py), [HAProxy](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_haproxy_blocking.py) and [Traefik](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_traefik_blocking.py), and nginx by [its own test](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_nginx_blocking.py). The [README](https://github.com/fabriziosalmi/patterns#does-it-load) says what they found. Where a target does not load, the test records the known state and the issue that tracks it, and fails the day that changes. Today nginx and Traefik load what is generated; Apache and HAProxy do not.
+Whether a rule is written, and whether the server accepts what was written, are different questions. Each target is also run through its real server with the same corpus of ordinary and hostile requests: [Apache with ModSecurity](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_apache_blocking.py), [HAProxy](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_haproxy_blocking.py) and [Traefik](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_traefik_blocking.py), and nginx by [its own test](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_nginx_blocking.py). The [README](https://github.com/fabriziosalmi/patterns#does-it-load) says what they found. Where a target does not load, the test records the known state and the issue that tracks it, and fails the day that changes. Today nginx, Apache and Traefik load what is generated; HAProxy does not.
 
 ## Regular expression dialects
 

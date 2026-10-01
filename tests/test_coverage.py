@@ -230,9 +230,11 @@ check("nginx declares lowercase: a rule that declares it is matched with ~*",
       '"~*zqxjk"' in built("nginx", lowered)["waf_maps.conf"], True)
 check("nginx: and one that does not is matched with ~",
       '"~zqxjk"' in built("nginx", rule())["waf_maps.conf"], True)
-check("apache declares no transformations: the rule is written with t:none only",
-      "t:none," in built("apache", lowered)["test.conf"]
-      and "t:lowercase" not in built("apache", lowered)["test.conf"], True)
+check("apache declares lowercase: a rule that declares it is written with t:lowercase",
+      "t:none,t:lowercase," in built("apache", lowered)["test.conf"], True)
+check("apache: and one that does not is written with t:none only",
+      "t:none," in built("apache", rule())["test.conf"] and "t:lowercase" not in built("apache", rule())["test.conf"],
+      True)
 check("haproxy declares case-insensitive: every ACL is written with -i",
       " -i " in built("haproxy", lowered)["waf.acl"], True)
 insensitive = rule(operator={"name": "rx", "negated": False, "argument": "(?i)zqxjk"},
@@ -269,6 +271,92 @@ check("a negated operator is not written as the expression it negates",
       backends.get("traefik").compile(ir.IR(rules=[rule(
           operator={"name": "rx", "negated": True, "argument": "zqxjk"}, pattern="!@rx zqxjk", **UA)])
       ).decisions[0].reason, "operator-unsupported")
+print("what the Apache backend writes")
+ID_OFFSET = 9_000_000
+apache_records = [(d, R.rules[d.index]) for d in compiled["apache"].decisions if d.emitted]
+every_file = "".join(compiled["apache"].files.values())
+check("apache writes only @rx, not negated",
+      sorted({(r["operator"]["name"], r["operator"]["negated"]) for _, r in apache_records}), [("rx", False)])
+check("and nothing that is not a rule",
+      sorted({r["directive"] for _, r in apache_records}), ["SecRule"])
+check("every rule has an id of its own, ModSecurity refuses a file with two the same (#80)",
+      [i for i, n in __import__("collections").Counter(re.findall(r"[ ,\"]id:(\d+)", every_file)).items() if n > 1], [])
+check("and it is the CRS id, 9000000 and more, which no installed CRS has",
+      sorted(int(i) - ID_OFFSET for i in re.findall(r"[ ,\"]id:(\d+)", every_file)),
+      sorted(int(r["id"]) for _, r in apache_records))
+check("every argument is written as CRS wrote it, between the quotes",
+      [r["id"] for _, r in apache_records if f'"@rx {r["operator"]["argument"]}"' not in every_file], [])
+check("a rule that refuses is `high`, and the rest record",
+      sorted({(r["severity"], "deny,status:403" in line)
+              for _, r in apache_records for line in every_file.splitlines()
+              if f'id:{ID_OFFSET + int(r["id"])},' in line}),
+      [("high", True), ("low", False), ("medium", False)])
+check("nothing sets the engine: that is the deployment's",
+      re.findall(r"^\s*SecRuleEngine", every_file, re.M), [])
+check("no variable is one that is not ModSecurity's",
+      sorted(set(re.findall(r"^SecRule (\S+) ", every_file, re.M))),
+      sorted(["ARGS", "REQUEST_FILENAME", "REQUEST_HEADERS:Content-Type", "REQUEST_HEADERS:Host",
+              "REQUEST_HEADERS:Referer", "REQUEST_HEADERS:User-Agent", "REQUEST_URI"]))
+
+
+def apache_decision(argument="zqxjk", name="rx", negated=False, **extra):
+    """What the Apache backend does with one rule made for the purpose."""
+    record = rule(operator={"name": name, "negated": negated, "argument": argument}, **extra)
+    compiled_one = backends.get("apache").compile(ir.IR(rules=[record]))
+    return (compiled_one.decisions[0].emitted, compiled_one.decisions[0].reason), compiled_one.files
+
+
+check("apache: a rule that is fine is written", apache_decision()[0], (True, None))
+check("a negated operator is not", apache_decision(negated=True)[0], (False, "operator-unsupported"))
+check("nor one that is not a regular expression", apache_decision("1", "lt")[0], (False, "operator-unsupported"))
+check("nor a record that is not a rule", apache_decision(directive="SecRuleUpdateTargetById")[0],
+      (False, "not-a-rule"))
+check("and it says what the record is, not that it has no id",
+      backends.get("apache").compile(ir.IR(rules=[rule(directive="SecRuleUpdateTargetById")])).decisions[0].detail,
+      "SecRuleUpdateTargetById 2")
+check("nor an expression PCRE does not compile", apache_decision("zq(xjk")[0], (False, "invalid-regex"))
+check("nor one on a variable it cannot check against ordinary traffic",
+      apache_decision(location="Cookie")[0], (False, "location-unsupported"))
+check("nor one that does not refuse", apache_decision(action="pass")[0], (False, "not-blocking"))
+check("nor one an ordinary request matches", apache_decision("Googlebot", location="User-Agent")[0],
+      (False, "matches-benign-traffic"))
+check("ARGS is decoded before a rule is checked against ordinary traffic: `gr%C3%BC%C3%9Fe` is `grüße` to ModSecurity",
+      apache_decision("grüße", location="Query-String")[0], (False, "matches-benign-traffic"))
+check("an argument is read the way Apache reads it, `\\\\(` being `\\(`, before it is checked",
+      apache_decision(r"\\(KHTML", location="User-Agent")[0], (False, "matches-benign-traffic"))
+check("a rule that declares t:lowercase is checked on lower-case input, as ModSecurity will run it",
+      apache_decision("googlebot", location="User-Agent", transformations=["lowercase"])[0],
+      (False, "matches-benign-traffic"))
+check("and one that does not is not: `googlebot` does not match `Googlebot` without it",
+      apache_decision("googlebot", location="User-Agent")[0], (True, None))
+check("but a lookbehind is PCRE, and is written", apache_decision("(?<!no)zqxjk")[0], (True, None))
+check("an id from the CRS id", 'id:9000007,' in apache_decision(rule_id="7")[1]["test.conf"], True)
+check("and phase and severity from the rule",
+      "phase:1," in apache_decision(phase=1)[1]["test.conf"]
+      and "severity:'CRITICAL'" in apache_decision()[1]["test.conf"], True)
+check("a rule below high records and does not refuse",
+      "pass,log" in apache_decision(severity="medium")[1]["test.conf"]
+      and "deny" not in apache_decision(severity="medium")[1]["test.conf"], True)
+check("an argument with quotes and backslashes is written as it was read",
+      '"@rx ^say \\"hi\\" \\\\ \\d$"' in apache_decision(r'^say \"hi\" \\ \d$')[1]["test.conf"], True)
+check("ARGS is checked as ModSecurity holds it, decoded: `%3Cb%3E` is `<b>` there",
+      __import__("patterns.corpus", fromlist=["x"]).arguments(
+          {"args": "q=%3Cb%3E+x&z=", "body": "", "content_type": ""}), ["<b> x", ""])
+check("and a form body is part of it, and a JSON one is not",
+      __import__("patterns.corpus", fromlist=["x"]).arguments(
+          {"args": "", "body": "a=1&b=%26", "content_type": "application/x-www-form-urlencoded"}), ["1", "&"])
+check("a JSON body is checked as if the deployment parses it: a value for each leaf",
+      __import__("patterns.corpus", fromlist=["x"]).arguments(
+          {"args": "", "body": '{"a":"x","b":[1,{"c":null}]}', "content_type": "application/json"}), ["x", "1"])
+check("and one that is not JSON is not an error",
+      __import__("patterns.corpus", fromlist=["x"]).arguments(
+          {"args": "", "body": "{not json", "content_type": "application/json"}), [])
+from patterns.backends._common import modsecurity_quote, modsecurity_unquote  # noqa: E402
+check("quoting and reading a quoted argument are inverses",
+      [v for v in (r"a\b", 'say "hi"', r"\d+\.\d", r'\"', "", "\\\\\"") if modsecurity_unquote(modsecurity_quote(v)) != v], [])
+check("and what is written for a backslash is two, as Apache reads two as one",
+      modsecurity_quote("a\\b"), "a\\\\b")
+
 try:
     import tomllib
 except ImportError:  # before 3.11
@@ -294,7 +382,7 @@ check("what each backend declares it can express is what is shown above and noth
            sorted(c.capabilities.transformations), c.capabilities.case_insensitive)
        for n, c in ((n, backends.get(n)) for n in backends.names())},
       {"nginx": ("pcre", ["rx"], ["lowercase"], True),
-       "apache": ("pcre", ["rx"], [], True),
+       "apache": ("pcre", ["rx"], ["lowercase"], True),
        "traefik": ("re2", ["rx"], [], True),
        "haproxy": ("pcre", ["contains", "endsWith", "rx", "streq"], ["lowercase"], True)})
 check("every location a backend wrote a regular expression on is one it declares",
@@ -322,6 +410,13 @@ print("dialects")
 check("pcre takes what Python can parse", dialects.check("pcre", r"a(?=b)(?<!c)\x{263a}"), None)
 check("a global flag that is not at the start is fine, in every Python",
       dialects.check("pcre", "!(?i)abc"), None)
+check("the stand-in compiler moves a global flag to the start, which Python 3.11 would refuse",
+      bool(dialects.python_compile("a(?i)b").search("AB")), True)
+check("so a rule with one is still checked against ordinary traffic, and not skipped",
+      __import__("patterns.corpus", fromlist=["x"]).first_ordinary_match("zqxjk|(?i)googlebot", "user_agent"),
+      "googlebot")
+check("and what Python cannot compile either way is None, as it was",
+      (dialects.python_compile("a(b"), dialects.python_compile("(?<=a+)b")), (None, None))
 check("re2 has no lookahead", "lookaround" in (dialects.check("re2", "a(?=b)") or ""), True)
 check("nor lookbehind", "lookaround" in (dialects.check("re2", "(?<!no)bad") or ""), True)
 check("nor backreference", "backreference" in (dialects.check("re2", r"(a)\1") or ""), True)

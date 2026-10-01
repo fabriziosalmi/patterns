@@ -100,7 +100,7 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 | Target | Full | Approximate | Unsound | Dropped |
 |---|---:|---:|---:|---:|
 | Nginx | 12 | 156 | 0 | 581 |
-| Apache (ModSecurity) | 0 | 1 | 712 | 36 |
+| Apache (ModSecurity) | 9 | 170 | 0 | 570 |
 | Traefik | 0 | 3 | 0 | 746 |
 | HAProxy | 2 | 97 | 403 | 247 |
 
@@ -108,25 +108,24 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 
 | Reason | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
 |---|---:|---:|---:|---:|
-| matched on a request component the target does not have | 96 |  | 685 | 160 |
-| an operator the backend cannot express | 398 | 21 | 2 | 31 |
-| not a rule: it changes another rule | 54 |  | 54 | 54 |
-| the expression does not compile |  | 15 |  | 2 |
+| matched on a request component the target does not have | 96 | 93 | 685 | 160 |
+| an operator the backend cannot express | 398 | 398 | 2 | 31 |
+| not a rule: it changes another rule | 54 | 54 | 54 | 54 |
+| it refuses ordinary traffic once converted | 13 | 21 |  |  |
 | longer than the target accepts | 16 |  |  |  |
-| it refuses ordinary traffic once converted | 13 |  |  |  |
+| it records and does not refuse | 4 | 4 |  |  |
 | its severity is below what refuses, and the target cannot only record |  |  | 5 |  |
-| it records and does not refuse | 4 |  |  |  |
+| the expression does not compile |  |  |  | 2 |
 
 **What a written rule loses**, in how many of them:
 
 | Loss | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
 |---|---:|---:|---:|---:|
-| matched on other variables than the rule names | 149 | 633 | 3 | 480 |
-| an operator written as something it is not |  | 373 |  | 301 |
-| transformations the rule was written to run after are not applied | 115 | 184 | 2 | 136 |
-| the expression was rewritten |  | 281 |  | 100 |
-| a chain written without all of its links | 13 | 121 |  | 56 |
-| written although it is not a rule |  | 54 |  |  |
+| matched on other variables than the rule names | 149 | 164 | 3 | 480 |
+| transformations the rule was written to run after are not applied | 115 | 116 | 2 | 136 |
+| an operator written as something it is not |  |  |  | 301 |
+| the expression was rewritten |  |  |  | 100 |
+| a chain written without all of its links | 13 | 10 |  | 56 |
 <!-- coverage:end -->
 
 The nginx figures above are measured on the rules in its row here. The table is
@@ -139,13 +138,21 @@ Every target has been run through its real server with the same corpus, by
 [`tests/test_nginx_blocking.py`](tests/test_nginx_blocking.py),
 [`tests/test_traefik_blocking.py`](tests/test_traefik_blocking.py),
 [`tests/test_apache_blocking.py`](tests/test_apache_blocking.py) and
-[`tests/test_haproxy_blocking.py`](tests/test_haproxy_blocking.py). **nginx and
-Traefik load what is generated. Apache and HAProxy do not:**
+[`tests/test_haproxy_blocking.py`](tests/test_haproxy_blocking.py). **nginx, Apache
+and Traefik load what is generated. HAProxy does not:**
 
 | Target | What the server says | |
 |---|---|---|
-| Apache | `Failed to resolve operator: lt\`: operators written as if they were patterns | [#55](https://github.com/fabriziosalmi/patterns/issues/55) |
 | HAProxy | `unmatched quote`, and fetches that do not exist, however the file is loaded | [#67](https://github.com/fabriziosalmi/patterns/issues/67), [#68](https://github.com/fabriziosalmi/patterns/issues/68) |
+
+Apache was in that table until [#55](https://github.com/fabriziosalmi/patterns/issues/55):
+it wrote the operators CRS names as if they were patterns, after `re.escape` had turned
+them into other patterns (`Failed to resolve operator: lt\`), and its bad-bot list gave
+every rule the same id ([#80](https://github.com/fabriziosalmi/patterns/issues/80)). It
+now writes `@rx` as CRS wrote it, and the test runs it in a real Apache with ModSecurity:
+none of the 122 ordinary requests is refused, and 13 of the 21 attacks are, in clear
+and percent-encoded, because ModSecurity decodes `ARGS` before a rule reads it, which
+`nginx` cannot do.
 
 Traefik needs a plugin, which Traefik's output was not written for until
 [#69](https://github.com/fabriziosalmi/patterns/issues/69): it is now written for
@@ -166,7 +173,7 @@ tested before it has anything real to measure.
 |---|---|
 | **OWASP CRS coverage** | SQLi, XSS, RCE, LFI, RFI, plus generic anomaly and protocol-violation rules. |
 | **Native output** | Nginx `map`/`if`, Apache `SecRule`, Traefik middleware TOML, HAProxy ACL files. |
-| **Bad-bot blocking** | User-Agent lists from public sources. Search engines, link previews and uptime monitors are left out of them, and the nginx, Traefik and HAProxy tests check it in the real server (Apache's `bots.conf` does not load yet: [#80](https://github.com/fabriziosalmi/patterns/issues/80)). HTTP libraries (`curl`, `python-requests`) are refused on purpose. |
+| **Bad-bot blocking** | User-Agent lists from public sources. Search engines, link previews and uptime monitors are left out of them, and the nginx, Apache, Traefik and HAProxy tests check it in the real server. HTTP libraries (`curl`, `python-requests`) are refused on purpose. |
 | **Nightly, tested** | A scheduled GitHub Actions workflow rebuilds every backend, runs the tests on the result, and publishes only if they pass and something changed. |
 | **Pre-built, signed archives** | Skip the toolchain &mdash; download `nginx_waf.zip`, `apache_waf.zip`, `traefik_waf.zip`, or `haproxy_waf.zip` from a dated release that is never replaced, and [verify it](https://fabriziosalmi.github.io/patterns/verify). |
 | **Measured** | What each target does with each rule is generated and published: [coverage](https://fabriziosalmi.github.io/patterns/coverage). |
@@ -184,8 +191,8 @@ curl -LO https://github.com/fabriziosalmi/patterns/releases/latest/download/ngin
 unzip nginx_waf.zip -d /etc/nginx/waf_patterns
 ```
 
-> **The Apache and HAProxy output does not load today.** Both refuse the generated files in
-> their real servers; nginx and Traefik load them: see [Does it load?](#does-it-load). Releases are
+> **The HAProxy output does not load today.** HAProxy refuses the generated files in
+> its real server; nginx, Apache and Traefik load them: see [Does it load?](#does-it-load). Releases are
 > dated (`2026-10-01-crs-v4.29.0`), never replaced and signed; [verify one](https://fabriziosalmi.github.io/patterns/verify)
 > before you deploy it, or pin to it with `releases/download/<tag>/`.
 
@@ -326,7 +333,8 @@ The default list blocks SEO crawlers, AI training bots, and known scanners, and 
 |----------|----------|---------|
 | [`update_patterns.yml`](.github/workflows/update_patterns.yml) | Daily + manual | Re-fetch CRS, regenerate every backend, publish a release |
 | [`test_nginx.yml`](.github/workflows/test_nginx.yml) | On PR | Validate generated Nginx rules against a live container |
-| [`test_apache_docker.yml`](.github/workflows/test_apache_docker.yml) | On PR | Validate generated Apache rules against ModSecurity in Docker |
+| [`test_conformance.yml`](.github/workflows/test_conformance.yml) | On PR | Run the generated Apache, HAProxy and Traefik files in the real servers, and send them the corpus |
+| [`test_ir.yml`](.github/workflows/test_ir.yml) | On PR | The IR, the backends, the coverage matrix, the corpus, the releases and the diff |
 | [`docs.yml`](.github/workflows/docs.yml) | On `docs/` change | Build and deploy the VitePress docs to GitHub Pages |
 
 All workflows run on **GitHub-hosted runners** (`ubuntu-latest`).

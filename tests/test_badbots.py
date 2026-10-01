@@ -42,6 +42,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import badbots  # noqa: E402
 from patterns import corpus  # noqa: E402
+from patterns.backends._common import modsecurity_unquote  # noqa: E402
 
 sys.path.insert(0, str(REPO_ROOT / "tests"))
 import conformance  # noqa: E402
@@ -146,8 +147,8 @@ print("the committed lists")
 ROOT = REPO_ROOT / "waf_patterns"
 entries = {
     "nginx": re.findall(r'^\s+"~\*(.*)" 1;$', (ROOT / "nginx" / "bots.conf").read_text(), re.M),
-    "apache": re.findall(r'^SecRule REQUEST_HEADERS:User-Agent "@contains (.*)" "id:',
-                         (ROOT / "apache" / "bots.conf").read_text(), re.M),
+    "apache": [modsecurity_unquote(e) for e in re.findall(
+        r'^SecRule REQUEST_HEADERS:User-Agent "@rx \(\?i\)(.*)" "id:', (ROOT / "apache" / "bots.conf").read_text(), re.M)],
     "haproxy": re.findall(r"^acl bad_bot hdr_sub\(User-Agent\) -i (.*)$",
                           (ROOT / "haproxy" / "bots.acl").read_text(), re.M),
 }
@@ -163,6 +164,32 @@ for fmt, found in entries.items():
           [b for b in ("AhrefsBot", "SemrushBot", "MJ12bot") if b not in found], [])
     check(f"{fmt}: and says what it left out",
           (ROOT / fmt / FILES[fmt]).read_text().count("# Left out") > 5, True)
+
+print("Apache: a rule of its own for each entry")
+
+
+def apache_written(bots, left=()):
+    """What badbots writes to bots.conf for Apache."""
+    with tempfile.TemporaryDirectory() as tmp:
+        badbots.OUTPUT_DIRS["apache"] = tmp
+        badbots.generate_apache_conf(bots, left)
+        return (Path(tmp) / "bots.conf").read_text()
+
+
+apache = apache_written(["AhrefsBot", r"008\/", 'say "hi"', r"a\\b", "zq(xjk", "100%{x}", " YLT"])
+ids = re.findall(r'"id:(\d+),', apache)
+check("every rule has an id, and no two are the same, which ModSecurity refuses", len(ids) == len(set(ids)) == 5, True)
+check("in the range the bad-bot list has, not the 3000 they all had", min(map(int, ids)) > 8_000_000, True)
+check("an entry is a regular expression with case ignored, as nginx reads it",
+      '"@rx (?i)AhrefsBot"' in apache, True)
+check("what Apache unquotes is the entry: a backslash is written twice, a quote escaped",
+      [modsecurity_unquote(e) for e in re.findall(r'"@rx \(\?i\)(.*?)" "id:', apache)],
+      ["AhrefsBot", r"008\/", 'say "hi"', r"a\\b", " YLT"])
+check("an entry PCRE cannot compile is left out, and said", "# Not written: zq(xjk" in apache, True)
+check("so is one with a macro, which ModSecurity would expand", "# Not written: 100%{x}" in apache, True)
+check("the file does not set the engine: that is the deployment's",
+      re.findall(r"SecRuleEngine", apache), [])
+check("every written rule says what it is, so a log line can be read", apache.count("msg:'bad bot'"), 5)
 
 print("HAProxy: one entry is one word")
 check("a space ends a word, so it is protected", badbots.haproxy_word("Ask Jeeves"), r"Ask\ Jeeves")

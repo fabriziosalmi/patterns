@@ -5,11 +5,19 @@ What the generated Apache configuration does in a real Apache with ModSecurity.
 The Apache workflow ran `httpd -t` in a loop that never used the file it was
 looping over, in an image with no ModSecurity, on files mounted where Apache does
 not read them. It could not fail. Loaded by the real thing, through the include
-docs/apache.md recommends, the committed output does not load (#55).
+docs/apache.md recommends, the committed output did not load (#55): operators CRS
+writes as `@lt` and `@pm` were written out as if they were patterns, after `re.escape`
+had turned them into other patterns. And `bots.conf` gave every rule the same id,
+which ModSecurity refuses (#80).
 
-  load    `httpd -t` with `Include /waf/*.conf`, as the documentation says. If it
-          does not load, each file is tried alone, to say how many do.
-  traffic where it loads, the corpus, as in tests/conformance.py.
+  load      `httpd -t` with `Include /waf/*.conf`, as the documentation says. If it
+            does not load, each file is tried alone, to say how many do.
+  traffic   where it loads, the corpus through the rule files, as in tests/conformance.py.
+  engine    the rule files do not say `SecRuleEngine`: docs/apache.md says to start in
+            `DetectionOnly`, and a file that says `On` takes that away. The engine is
+            set to `DetectionOnly` before the include, and nothing may be refused.
+  bots      `bots.conf` on its own, held to what the other targets' lists are
+            (tests/conformance.py `report_bots`).
 
 What a target does today is EXPECTED, with its issue. A target that does not load
 is not sent traffic. So that the traffic phase is not left untested until it can
@@ -32,16 +40,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import conformance as c  # noqa: E402
 from conformance import REPO_ROOT  # noqa: E402
+from patterns.corpus import ATTACKS  # noqa: E402
 
 # Apache 2.4 with ModSecurity 2 (mod_security2) and nothing else, from the OWASP
 # project. The Core Rule Set is not in it: the rules under test are ours.
 IMAGE = "owasp/modsecurity:apache"
 PORT = 18902
 
-# What the generated output does today. `alert` is a part of the first error.
-EXPECTED: Dict = {"loads": False, "alert": "Failed to resolve operator", "issue": "#55"}
+# What the generated output does today. A rule that matches an ordinary request is not
+# written, so none is refused; the floors are below what the rules refuse now, and are
+# there to catch a collapse (see tests/test_nginx_blocking.py).
+EXPECTED: Dict = {"loads": True, "benign": [], "floor_clear": 11, "floor_encoded": 11}
 
 FIXTURE = {"loads": True, "benign": [], "floor_clear": 2, "floor_encoded": 0}
+
+
+LOCATION = '<Location "/">\n    ProxyPass !\n</Location>\n'
 
 
 def includes(files: List[str]) -> str:
@@ -51,8 +65,19 @@ def includes(files: List[str]) -> str:
     answer for itself. It is a reverse proxy to a backend that is not there, so
     `/` is taken out of the proxy and Apache serves it.
     """
-    return '<Location "/">\n    ProxyPass !\n</Location>\n' + "".join(
-        f"Include /waf/{name}\n" for name in files)
+    return LOCATION + "".join(f"Include /waf/{name}\n" for name in files)
+
+
+def setup(files: List[str], engine: str) -> str:
+    """
+    The image's ModSecurity setup, with the engine set as docs/apache.md says and the
+    rules included after it: what a person's configuration looks like. The image reads
+    the extra file above before it reads its own setup, so a rule file that sets the
+    engine would be overridden there, and the order cannot be tested from it.
+    """
+    return ("Include /etc/modsecurity.d/modsecurity.conf\n"
+            "Include /etc/modsecurity.d/modsecurity-override.conf\n"
+            f"SecRuleEngine {engine}\n" + "".join(f"Include /waf/{name}\n" for name in files))
 
 
 def configtest(waf_dir: Path, files: List[str]) -> Tuple[bool, Optional[str]]:
@@ -73,9 +98,42 @@ def configtest(waf_dir: Path, files: List[str]) -> Tuple[bool, Optional[str]]:
     return False, f"{error} {detail}".strip()
 
 
+_KEEP: List[tempfile.TemporaryDirectory] = []
+
+
+def _mounted(name: str, text: str, inside: str) -> Dict[Path, str]:
+    """A file with this content, mounted at `inside`. It lives as long as the process."""
+    holder = tempfile.TemporaryDirectory()
+    holder_path = Path(holder.name)
+    holder_path.chmod(0o755)
+    _KEEP.append(holder)
+    path = holder_path / name
+    path.write_text(text)
+    path.chmod(0o644)
+    return {path: inside}
+
+
+def serve(waf_dir: Path, files: List[str], engine: Optional[str] = None):
+    """
+    A container running Apache with these files included. With `engine`, the image's
+    ModSecurity setup sets it and then includes the files; without, they are included
+    the way docs/apache.md shows and the image sets the engine itself.
+    """
+    volumes = {waf_dir.resolve(): "/waf"}
+    if engine:
+        volumes.update(_mounted("httpd-locations.conf", LOCATION,
+                                "/usr/local/apache2/conf/extra/httpd-locations.conf"))
+        volumes.update(_mounted("setup.conf", setup(files, engine), "/etc/modsecurity.d/setup.conf"))
+    else:
+        volumes.update(_mounted("httpd-locations.conf", includes(files),
+                                "/usr/local/apache2/conf/extra/httpd-locations.conf"))
+    return c.Container([IMAGE], {PORT: 8080}, volumes, env={"PORT": "8080"})
+
+
 def exercise(waf_dir: Path, expected: Dict, check: c.Checker, each: bool) -> None:
-    """Loads every rule file together and, if they load, sends the corpus."""
+    """Loads every file together and, if they load, sends the corpus and the bots."""
     files = sorted(p.name for p in waf_dir.glob("*.conf"))
+    rules = [name for name in files if name != "bots.conf"]
     loads, error = configtest(waf_dir, files)
 
     print("\nload")
@@ -94,21 +152,38 @@ def exercise(waf_dir: Path, expected: Dict, check: c.Checker, each: bool) -> Non
                        + (f": {', '.join(loading)}" if loading else ""))
         return
 
-    with tempfile.TemporaryDirectory() as tmp:
-        extra = Path(tmp) / "httpd-locations.conf"
-        extra.write_text(includes(files))
-        with c.Container(
-                [IMAGE], {PORT: 8080},
-                {waf_dir.resolve(): "/waf",
-                 extra: "/usr/local/apache2/conf/extra/httpd-locations.conf"},
-                env={"PORT": "8080"}) as server:
-            if not server.wait(PORT, timeout=60):
-                check.fail("apache loaded the rules and did not answer")
-                check.note(server.logs()[-300:])
-                return
-            traffic = c.measure(PORT)
+    with serve(waf_dir, rules) as server:
+        if not server.wait(PORT, timeout=60):
+            check.fail("apache loaded the rules and did not answer")
+            check.note(server.logs()[-300:])
+            return
+        traffic = c.measure(PORT)
     c.report_traffic(check, traffic, expected["benign"], expected["floor_clear"],
                      expected["floor_encoded"])
+
+    print("\nthe engine mode is the deployment's")
+    check.expect("the rule files say nothing about SecRuleEngine",
+                 [n for n in rules if re.search(r"^\s*SecRuleEngine\b", (waf_dir / n).read_text(), re.M)], [])
+    for engine, refuses in (("DetectionOnly", False), ("On", True)):
+        with serve(waf_dir, rules, engine=engine) as server:
+            if not server.wait(PORT, timeout=60):
+                check.fail(f"apache did not answer with SecRuleEngine {engine}")
+                check.note(server.logs()[-300:])
+                return
+            refused = [e["name"] for e in ATTACKS if c.send(PORT, e) == 403 or c.send(PORT, c.in_clear(e)) == 403]
+            if refuses:
+                check.expect(f"with SecRuleEngine {engine} the rules refuse something", bool(refused), True)
+            else:
+                check.expect(f"with SecRuleEngine {engine} nothing is refused", refused, [])
+
+    if "bots.conf" in files:
+        print("\nthe bad-bot list (bots.conf)")
+        with serve(waf_dir, ["bots.conf"]) as server:
+            if not server.wait(PORT, timeout=60):
+                check.fail("apache loaded bots.conf and did not answer")
+                check.note(server.logs()[-300:])
+                return
+            c.report_bots(check, lambda agent: c.send(PORT, c.user_agent_request(agent, "/")) == 403)
 
 
 def main() -> int:

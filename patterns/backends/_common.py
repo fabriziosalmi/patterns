@@ -60,6 +60,28 @@ def toml_string(value: str) -> str:
     return '"' + "".join(out) + '"'
 
 
+def modsecurity_quote(value: str) -> str:
+    """
+    Writes a string between the double quotes of a ModSecurity directive, so that what
+    ModSecurity reads is exactly `value`.
+
+    Apache reads a quoted argument before ModSecurity sees it, and takes `\\\\` for one
+    backslash and `\\"` for a quote. A regular expression that means a literal backslash
+    has to arrive with it doubled, or it is another expression: this is what
+    `re.escape` was doing the wrong way round (#55).
+    """
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def modsecurity_unquote(text: str) -> str:
+    """
+    What ModSecurity reads from the text between the quotes of a directive: the
+    inverse of `modsecurity_quote`. CRS writes its arguments this way, and the IR keeps
+    them as written, so this is the regular expression the engine compiles.
+    """
+    return re.sub(r'\\(["\\])', r"\1", text)
+
+
 def without_handled_syntax(argument: str) -> str:
     """
     What a regular expression is once the syntax a backend handles another way

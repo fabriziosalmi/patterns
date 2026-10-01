@@ -7,7 +7,7 @@ You can include these files in your existing Apache configuration to enhance sec
 
 - Apache HTTP Server (2.4 or higher)
 - ModSecurity module installed and enabled
-- Core Rule Set (CRS) base configuration
+- `SecRuleEngine` set in your own configuration (`DetectionOnly` while you watch it, then `On`): these files do not set it, and they do not need the Core Rule Set installed
 
 ## Installation
 

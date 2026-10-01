@@ -62,6 +62,33 @@ def python_equivalent(pattern: str) -> str:
     return pattern
 
 
+def python_compile(pattern: str, flags: int = 0):
+    """
+    Compiles a pattern with Python's `re`, as the stand-in for the target's engine.
+
+    PCRE applies a global flag, `(?i)`, from where it stands, and from 3.11 `re` refuses
+    one that is not at the start. A pattern is not left unchecked for that: the flag is
+    moved to the start, which applies it to the whole pattern, so the stand-in matches
+    at least what the engine does. A check that errs towards matching more can only
+    exclude a rule it should not have, never let one through.
+
+    Returns:
+        The compiled pattern, or None when Python cannot compile it either way: an
+        expression only the target's engine has.
+    """
+    text = python_equivalent(pattern)
+    try:
+        return re.compile(text, flags)
+    except re.error as e:
+        if "global flags not at the start" not in str(e):
+            return None
+    letters = "".join(sorted({c for group in _GLOBAL_FLAGS.findall(text) for c in group[2:-1]}))
+    try:
+        return re.compile(f"(?{letters})" + _GLOBAL_FLAGS.sub("", text), flags)
+    except re.error:
+        return None
+
+
 def _parse(pattern: str):
     """
     Parses a pattern, tolerating a global flag that is not at the start.

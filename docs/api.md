@@ -65,7 +65,7 @@ It reports and does not judge: it exits 0 whatever it finds. The nightly release
 
 `build --all` also writes `coverage.json` next to the targets: a verdict for every rule and target, which [Coverage](/coverage) explains. It refuses to write anything if a backend would write a regular expression its target's engine does not compile.
 
-The same IR gives the same files, byte for byte, whatever the hash seed or the machine, **on Python 3.11 or later**. The backends keep a pattern only if Python's `re` compiles it, and from 3.11 `re` rejects a global flag such as `(?i)` that is not at the start of the pattern, where 3.9 accepts it: four Apache rules are in one output and not in the other. `build` warns on an older Python, and the committed files are the 3.11 ones. Exit codes: 0 on success, 1 when a file cannot be read or `--check` finds a difference, 2 on a usage error.
+The same IR gives the same files, byte for byte, whatever the hash seed or the machine, **on Python 3.11 or later**. The dialect check that decides whether a target's engine compiles a pattern parses it with Python's own parser, and only from 3.11 does that parser know atomic groups and possessive quantifiers, which Go's RE2 does not have. `build` warns on an older Python, and the committed files are the 3.11 ones. Exit codes: 0 on success, 1 when a file cannot be read or `--check` finds a difference, 2 on a usage error.
 
 ::: warning The `json2*.py` scripts are deprecated
 `json2nginx.py`, `json2apache.py`, `json2traefik.py` and `json2haproxy.py` remain for one release as thin wrappers: each runs one target, reads `INPUT_FILE` and `OUTPUT_DIR` as before, and says it is deprecated. Use `python3 -m patterns build --target <name>`.

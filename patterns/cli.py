@@ -55,10 +55,13 @@ COVERAGE_FILE = "coverage.json"
 COVERAGE_DOCS = ("README.md", "docs/coverage.md")
 _BLOCK = re.compile(r"(<!-- coverage:start -->\n)(.*?)(<!-- coverage:end -->)", re.DOTALL)
 
-# The backends ask Python's `re` whether a pattern compiles, and `re` changed.
-# From 3.11 a global flag such as `(?i)` anywhere but the start of the pattern is
-# an error, where before it was accepted. Four Apache rules are in one output and
-# not in the other, so the committed files are the 3.11 ones.
+# The committed files are built with 3.11 or later. The dialect check parses a
+# pattern with Python's own parser to find the constructs a target's engine lacks, and
+# only from 3.11 does that parser know atomic groups and possessive quantifiers, which
+# Go's RE2 (Traefik) does not have. Before 3.11 the same IR gives the same files today,
+# but a pattern with one would be written for an engine that rejects it. (It used to
+# differ for Apache, whose gate was `re.compile`, which from 3.11 rejects a global flag
+# such as `(?i)` that is not at the start; the gate is the dialect check now.)
 OUTPUT_PYTHON = (3, 11)
 
 

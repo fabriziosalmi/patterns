@@ -25,8 +25,8 @@ The fastest path. A scheduled GitHub Actions workflow builds every archive each 
 
 Pick one, extract, then jump to the matching integration guide.
 
-::: warning The Apache and HAProxy output does not load today
-Apache with ModSecurity and HAProxy refuse the generated files in their real servers ([#55](https://github.com/fabriziosalmi/patterns/issues/55), [#67](https://github.com/fabriziosalmi/patterns/issues/67), [#68](https://github.com/fabriziosalmi/patterns/issues/68)); nginx and Traefik load them. Each integration guide says what to expect at the top, and [Coverage](/coverage) says what every target does with every rule.
+::: warning The HAProxy output does not load today
+HAProxy refuses the generated files in its real server ([#67](https://github.com/fabriziosalmi/patterns/issues/67), [#68](https://github.com/fabriziosalmi/patterns/issues/68)); nginx, Apache and Traefik load them. Each integration guide says what to expect at the top, and [Coverage](/coverage) says what every target does with every rule.
 :::
 
 Releases are dated and never replaced, and every file is signed: [verify a release](/verify) before you deploy it.

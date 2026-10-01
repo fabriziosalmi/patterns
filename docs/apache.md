@@ -1,10 +1,17 @@
 # Apache Integration
 
-This guide explains how to deploy the generated rules in Apache HTTPD using the **ModSecurity** engine.
+This guide explains how to deploy the generated rules in Apache HTTPD with the **ModSecurity** engine. Apache is the target that can keep the most of what CRS wrote, because CRS is written in ModSecurity's own language: [Coverage](/coverage) says what it does with each rule. Every example below was run against Apache 2.4 with ModSecurity 2 (`owasp/modsecurity:apache`).
 
-::: warning The generated Apache rules do not load today
-Run through Apache 2.4 with ModSecurity 2, `httpd -t` fails on the committed output (`Failed to resolve operator`): operators CRS writes as `@lt`, `@pm` and the like are written out as if they were patterns ([#55](https://github.com/fabriziosalmi/patterns/issues/55)). The coverage page says [what each target does with each rule](/coverage), and `tests/test_apache_blocking.py` runs the real server on every change. What follows is the intended use.
-:::
+## What it can and cannot do
+
+Each rule is written as `@rx` with the expression CRS wrote, on the variable it matches, and a rule that CRS gives `t:lowercase` is written with it. That is a part of what a CRS rule is, and the rest is not written:
+
+- **Only `@rx` is written**, not negated. `@pm`, `@pmFromFile`, `@detectSQLi`, `@detectXSS`, the numeric comparisons and the byte-range checks are dropped. ModSecurity could run them; this backend does not write them yet.
+- **Only one transformation is applied, `lowercase`.** The others (`urlDecodeUni`, `htmlEntityDecode`, ...) are written as `t:none`, so a pattern that was written to run after one runs on the raw value. The one thing ModSecurity does for you is `ARGS`: its values are already URL-decoded, so an attack percent-encoded in the query string is caught as the same attack in clear.
+- **No anomaly score.** CRS adds points and refuses over a threshold. Here a rule decides alone: a rule of severity `high` refuses with a 403, and one below it records the match in the log and lets the request through (`pass,log`).
+- **A rule that refuses ordinary traffic is not written.** Without its transformations, some CRS rules mean something else; each is checked against [a corpus of ordinary requests](https://github.com/fabriziosalmi/patterns/blob/main/patterns/corpus.py), as nginx's are, and left out if one matches. The corpus is held to this by [`tests/test_apache_blocking.py`](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_apache_blocking.py), which runs it through a real Apache on every change: 122 ordinary requests, none refused; of 21 attacks, 13 refused in clear and 13 percent-encoded.
+
+At CRS v4.29.0 that is 179 rules written (9 in full, 170 with a named loss), and the rest dropped with a reason. It is a useful first filter in front of an application. It is not the Core Rule Set: if you can install that, do.
 
 ## Prerequisites
 
@@ -30,24 +37,26 @@ sudo apk add mod_security
 
 ## Quick start
 
-1. Download `apache_waf.zip` from the [latest release](https://github.com/fabriziosalmi/patterns/releases/latest).
+1. Download `apache_waf.zip` from the [latest release](https://github.com/fabriziosalmi/patterns/releases/latest) (or from a [pinned one](/verify)).
 2. Extract under your Apache config tree (e.g. `/etc/apache2/waf_patterns/apache/`).
 3. Include the `.conf` files from the relevant virtual host or globally.
 
 ## Files in the archive
 
-The Apache output is split by attack family, each containing standard ModSecurity `SecRule` directives.
+The Apache output is split by the part of CRS each rule comes from. A category with nothing in it has no file.
 
-| File | Protection |
-|------|------------|
+| File | CRS category |
+|------|--------------|
 | `sqli.conf` | SQL injection |
 | `xss.conf` | Cross-site scripting |
 | `rce.conf` | Remote code execution |
-| `lfi.conf` | Local file inclusion |
-| `rfi.conf` | Remote file inclusion |
-| `php.conf`, `java.conf`, `iis.conf`, `shells.conf` | Stack-specific exploits |
-| `attack.conf`, `generic.conf`, `correlation.conf`, `evaluation.conf` | Generic anomaly detection |
-| `bots.conf` | Bad-bot User-Agent rules |
+| `lfi.conf`, `rfi.conf` | Local and remote file inclusion |
+| `php.conf`, `java.conf` | Stack-specific attacks |
+| `generic.conf` | Generic application attacks |
+| `enforcement.conf` | HTTP protocol enforcement |
+| `attack.conf` | HTTP protocol attacks |
+| `fixation.conf` | Session fixation |
+| `bots.conf` | Bad-bot User-Agent rules ([Bad Bot Detection](/badbots)) |
 
 ## Step 1 &mdash; Enable the engine
 
@@ -64,9 +73,13 @@ In `/etc/apache2/mods-enabled/security2.conf` (or equivalent):
 </IfModule>
 ```
 
+The generated files **do not set the engine**. That is yours to set, and it is how you run in detection mode first: a file that said `SecRuleEngine On` would take that choice away.
+
 ::: tip Run in detection mode first
-Set `SecRuleEngine DetectionOnly` for the first deployment. Watch the audit log, tune false positives, then flip to `On`.
+Set `SecRuleEngine DetectionOnly` for the first deployment. Every rule is evaluated and logged, and none refuses. Watch the log, tune false positives, then flip to `On`.
 :::
+
+`SecRequestBodyAccess On` is what puts the arguments of a form body in `ARGS`: without it the rules see the query string only.
 
 ## Step 2 &mdash; Include the rules
 
@@ -90,6 +103,10 @@ Include /etc/apache2/waf_patterns/apache/rce.conf
 Include /etc/apache2/waf_patterns/apache/bots.conf
 ```
 
+::: warning bots.conf refuses curl
+`bots.conf` refuses HTTP libraries on purpose: a request from `curl`, `python-requests` or `Go-http-client` gets a 403 whatever it asks for. A probe without `-A` tells you nothing once it is included. [Bad Bot Detection](/badbots) says why, and how to allow one.
+:::
+
 ## Step 3 &mdash; Validate and restart
 
 ```bash
@@ -98,27 +115,38 @@ sudo apachectl configtest && sudo systemctl restart apache2
 
 ## Rule format
 
-Generated rules follow the standard ModSecurity DSL:
+A rule is written as CRS wrote it, with the id and the message changed:
 
 ```apache
-SecRule REQUEST_URI "@rx union.*select" \
-    "id:100001,\
-    phase:2,\
-    deny,\
-    status:403,\
-    log,\
-    msg:'SQL Injection Attempt',\
-    severity:CRITICAL"
+SecRule REQUEST_HEADERS:Host "@rx ^$" "id:9920290,phase:1,t:none,deny,status:403,log,msg:'ENFORCEMENT, CRS 920290',severity:'CRITICAL'"
+```
+
+- **The id is 9000000 plus the CRS id.** CRS rule 920290 is rule 9920290. It cannot be the id of a CRS you have installed (900000 to 999999), and the log says which rule it was.
+- **`bots.conf` uses ids from 8000001.** They follow the order of the list, which changes every night: do not rely on one staying the same between releases.
+- The `phase` is the one CRS gave the rule, and `severity` is CRS's.
+- The expression is exactly what CRS wrote between the quotes, with `(?i)` where it had one.
+
+A rule that **records** instead of refusing, which is every rule below `high`, is the same with `pass,log`:
+
+```apache
+SecRule REQUEST_HEADERS:Host "@rx (?:^([\d.]+|\[[\da-f:]+\]|[\da-f:]+)(:[\d]+)?$)" "id:9920350,phase:1,t:none,pass,log,msg:'ENFORCEMENT, CRS 920350',severity:'WARNING'"
+```
+
+A match is in the log with the id and the message:
+
+```text
+Warning. Pattern match "(?:^([\\d.]+|\\[[\\da-f:]+\\]|[\\da-f:]+)(:[\\d]+)?$)" at REQUEST_HEADERS:Host.
+[file "/waf/enforcement.conf"] [line "11"] [id "9920350"] [msg "ENFORCEMENT, CRS 920350"] [severity "WARNING"]
 ```
 
 ## Customization
 
 ### Detection-only mode
 
-Switch a noisy rule from blocking to logging without removing it:
+Set `SecRuleEngine DetectionOnly` in your configuration, as above. To make a single rule record and not refuse:
 
 ```apache
-SecRuleUpdateActionById 100001 "pass,log,msg:'SQLi candidate (audit only)'"
+SecRuleUpdateActionById 9942160 "pass,log"
 ```
 
 ### Whitelist a path
@@ -128,28 +156,33 @@ SecRule REQUEST_URI "@beginsWith /api/webhook" \
     "id:1,phase:1,nolog,allow"
 ```
 
+Give the rule an id of your own: ids below 100000 are for local rules, so `1` does not clash with the generated ones.
+
 ### Disable a single rule
 
 ```apache
-SecRuleRemoveById 100001
+SecRuleRemoveById 9942160
 ```
-
-## Logs
-
-ModSecurity logs land in:
-
-- `/var/log/apache2/modsec_audit.log` &mdash; full audit trail
-- `/var/log/apache2/error.log` &mdash; rule matches and engine messages
 
 ## Testing
 
+Probe the deployment with a browser's User-Agent. The attack is refused the same way in clear and percent-encoded, because ModSecurity decodes `ARGS` before the rule reads it:
+
 ```bash
-curl -I "https://example.com/?id=1' UNION SELECT * FROM users--"
+UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36"
+curl -I -A "$UA" "https://example.com/?q=hello"                                   # 200
+curl -I -A "$UA" "https://example.com/?id=1'+OR+'1'='1"                           # 403
+curl -I -A "$UA" "https://example.com/?q=<script>alert(1)</script>"               # 403
+curl -I -A "$UA" "https://example.com/?q=%3Cscript%3Ealert(1)%3C/script%3E"       # 403
+curl -I -A "$UA" "https://example.com/?file=..%2f..%2fetc%2fpasswd"               # 403
+curl -I -A "sqlmap/1.8" "https://example.com/"                                    # 403, with bots.conf
 sudo tail -f /var/log/apache2/error.log
 ```
 
 ## Troubleshooting
 
 - **Module not loading** &mdash; confirm with `apachectl -M | grep security2`. Re-enable with `sudo a2enmod security2`.
-- **No rules triggering** &mdash; double-check `SecRuleEngine On` and that the include path resolves; `apachectl -S` lists the parsed config.
-- **Performance regressions** &mdash; identify hot rules in the audit log and disable or scope them with `SecRuleRemoveById` / `SecRule … chain`.
+- **No rules triggering** &mdash; the generated files do not set `SecRuleEngine`. Check yours is `On`, not `Off` or `DetectionOnly`, and that the include path resolves; `apachectl -S` lists the parsed config.
+- **A form body is not inspected** &mdash; `SecRequestBodyAccess On`. Whether a JSON body ends up in `ARGS` is up to your ModSecurity configuration (its JSON body processor, which the recommended `modsecurity.conf` enables for `application/json`); the rules are checked against ordinary traffic as if it did.
+- **`Found another rule with the same id`** &mdash; the CRS itself is installed and one of its ids is in this range, or two copies of these files are included. The ids here are 9000000 plus a CRS id and 8000001 and up.
+- **Performance regressions** &mdash; identify hot rules in the audit log and disable or scope them with `SecRuleRemoveById`.

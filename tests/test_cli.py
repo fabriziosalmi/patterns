@@ -22,10 +22,9 @@ This checks:
   * code that was copied four times is not copied again.
 
 The committed output is built with Python 3.11 or later, which is what the docs
-ask for and what CI runs. `re.compile` is what decides whether a pattern is kept,
-and from 3.11 it rejects a global flag that is not at the start of the pattern,
-where 3.9 accepts it: four Apache rules differ. Below 3.11 the two checks that
-compare with the committed files are skipped and say so.
+ask for and what CI runs: the dialect check needs the parser of 3.11 to see atomic
+groups and possessive quantifiers, which Go's RE2 does not have. Below 3.11 the two
+checks that compare with the committed files are skipped and say so.
 
 Usage:
     python3 tests/test_cli.py

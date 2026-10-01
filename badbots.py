@@ -10,7 +10,8 @@ import re
 from tqdm import tqdm  # Import tqdm for progress bar
 
 from patterns import corpus, dialects
-from patterns.backends._common import toml_string
+from patterns.backends._common import modsecurity_quote, toml_string
+from patterns.backends.apache import BOT_ID_OFFSET
 from patterns.backends.traefik import PLUGIN
 
 # Logging setup
@@ -220,9 +221,26 @@ def generate_apache_conf(bots, left_out=()):
     Generate Apache WAF configuration for blocking bots.
     """
     path = Path(OUTPUT_DIRS['apache'], "bots.conf")
-    content = left_out_note(left_out) + "SecRuleEngine On\n"
+    # Every entry is a regular expression, as the sources wrote it and as nginx and
+    # Traefik read it, with case ignored. Each rule needs an id of its own: ModSecurity
+    # refuses the file when two share one, and they all had `id:3000` (#80). An entry
+    # PCRE cannot compile stops the whole file from loading, so it is left out, and said.
+    # The file does not say `SecRuleEngine`: that is the deployment's to set.
+    content = left_out_note(left_out)
+    rules = []
     for bot in bots:
-        content += f'SecRule REQUEST_HEADERS:User-Agent "@contains {bot}" "id:3000,phase:1,deny,status:403"\n'
+        expression = "(?i)" + bot
+        problem = dialects.check("pcre", expression)
+        if not problem and "%{" in bot:
+            problem = "contains a ModSecurity macro, which would be expanded"
+        if problem:
+            content += f"# Not written: {bot} {problem}\n"
+            logging.warning(f"Apache: leaving out {bot!r}: {problem}")
+        else:
+            rules.append(expression)
+    for number, expression in enumerate(rules, 1):
+        content += (f'SecRule REQUEST_HEADERS:User-Agent "@rx {modsecurity_quote(expression)}" '
+                    f'"id:{BOT_ID_OFFSET + number},phase:1,t:none,deny,status:403,log,msg:\'bad bot\'"\n')
     write_to_file(path, content)
 
 

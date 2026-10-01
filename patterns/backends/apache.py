@@ -1,161 +1,173 @@
-import logging
-import re
-from collections import defaultdict
-from typing import Dict, List
+"""
+The Apache target: ModSecurity rules.
 
+The CRS is written in ModSecurity's own language, so this target is the one that
+can keep what a rule says. It did not. It read the legacy `pattern` string, ran
+`re.escape` over it and wrote the result as the regular expression: `@lt 1`
+became the pattern `\\@lt\\ 1`, and ModSecurity refused the file with
+`Failed to resolve operator: lt\\\\` (#55). The same line was written for the 54
+records that are not rules, and for every link of a chain on its own.
+
+A rule is now written when it is something this target can express and refuse
+with, and it is written as it was read:
+
+  * `@rx`, not negated, with the argument as CRS wrote it. The IR keeps it as it
+    stands between the quotes, which is also how it is written back, so Apache
+    reads it as it read CRS. `(?i)` stays, because PCRE has it.
+  * `t:lowercase` when the rule declares it. The other transformations are not
+    applied and the matrix says which, rule by rule: what is written is `t:none`
+    and the one it can check against the corpus.
+  * the variable the rule's location is, one of those the corpus can say is
+    ordinary. ARGS holds decoded values, not the raw query string nginx's `$args`
+    is, and is checked as such.
+  * a rule that refuses, `deny,status:403`, when its severity is `high`, and
+    `pass,log` otherwise: ModSecurity can record, so the rules below `high` are
+    in the output and in the log, as they are in nginx's maps.
+  * an id of its own. CRS rule N is written as `9000000 + N`: unique, never the
+    id of a CRS someone has installed (900000 to 999999), and the log says which
+    rule it was.
+
+The generated files do not say `SecRuleEngine`. docs/apache.md tells people to run
+`DetectionOnly` first, and a file that says `On` takes that away.
+"""
+
+import logging
+from collections import defaultdict
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
+
+from patterns import dialects
 from patterns.backends import Backend, Capabilities, Compiled, Decision, Target, register
-from patterns.backends._common import (
-    UNSUPPORTED_FILE_OPERATORS,
-    provenance_header,
-    validate_regex,
-)
+from patterns.backends._common import modsecurity_unquote, operator_of, provenance_header
+from patterns.corpus import arguments, first_ordinary_match
 from patterns.ir import IR
 
 logger = logging.getLogger(__name__)
 
-# ModSecurity Rule Templates (more flexible)
-MODSEC_RULE_TEMPLATE = (
-    'SecRule {variables} "{pattern}" '
-    '"id:{rule_id},phase:{phase},t:none,{actions},msg:\'{category} attack detected\',severity:{severity}"\n'
-)
-# Default Actions
-DEFAULT_ACTIONS = "deny,status:403,log"
+# CRS rule N is written as ID_OFFSET + N.
+ID_OFFSET = 9_000_000
 
-# Supported ModSecurity operators and their rough translations (for logging/info)
-SUPPORTED_OPERATORS = {
-    "@rx": "Regular Expression",
-    "@streq": "String Equals",
-    "@contains": "Contains String",
-    "@beginsWith": "Begins With",
-    "@endsWith": "Ends With",
-    "@within": "Contained Within",
-    "@ipMatch": "IP Address Match",
-    # ... add more as needed
+# The bad-bot list (badbots.py) is written as rules too, and its ids start here: the
+# n-th entry is rule BOT_ID_OFFSET + n. The ids of a release are not those of the next:
+# the list changes every night.
+BOT_ID_OFFSET = 8_000_000
+
+# The rules that refuse, what they refuse with, and what the others do.
+BLOCK = "deny,status:403,log"
+RECORD = "pass,log"
+
+# The ModSecurity severity names, by the three levels the IR folds them to.
+SEVERITY = {"high": "CRITICAL", "medium": "WARNING", "low": "NOTICE"}
+
+BLOCKING_ACTIONS = ("block", "deny", "drop")
+
+
+def _ascii_lower(value: str) -> str:
+    """What ModSecurity's `t:lowercase` does: ASCII only, as C's tolower does."""
+    return "".join(c.lower() if c < "\x80" else c for c in value)
+
+
+def _path(entry: Dict[str, str]) -> List[str]:
+    """REQUEST_FILENAME: the path, decoded, without the query string."""
+    import urllib.parse
+    return [urllib.parse.unquote(entry["path"])]
+
+
+# Where each location is matched: the variable, and what the corpus has for it. A
+# location is here only if both are: a rule is not written on a variable that nothing
+# says is ordinary.
+LOCATIONS: Dict[str, Tuple[str, str, Optional[Callable]]] = {
+    "request-uri": ("REQUEST_URI", "request_uri", None),
+    "query-string": ("ARGS", "args", arguments),
+    "request-filename": ("REQUEST_FILENAME", "path", _path),
+    "user-agent": ("REQUEST_HEADERS:User-Agent", "user_agent", None),
+    "host": ("REQUEST_HEADERS:Host", "host", None),
+    "referer": ("REQUEST_HEADERS:Referer", "referer", None),
+    "content-type": ("REQUEST_HEADERS:Content-Type", "content_type", None),
 }
 
 
-# --- Utility Functions ---
-def _sanitize_pattern(pattern: str) -> str:
-    """Internal helper to perform basic pattern sanitization."""
-    # Remove @rx prefix, if present
-    pattern = pattern.replace("@rx ", "").strip()
-    # You *could* add basic escaping here if needed, but be *very* careful
-    # not to break valid regexes.  It's generally better to handle this
-    # in the `owasp2json.py` script.
-    return pattern
+def blocks(rule: Dict) -> bool:
+    """
+    Whether a rule refuses the request. One with no disruptive action inherits `pass`.
 
-# The locations _determine_variables knows. Any other is matched on REQUEST_URI.
-_LOCATIONS = ("request-uri", "query-string", "user-agent", "host", "referer", "content-type")
+    A document that predates the field has none, and its rules are kept: an absent field
+    is not evidence of `pass`.
+    """
+    return "action" not in rule or rule["action"] in BLOCKING_ACTIONS
 
 
-def _determine_variables(location: str) -> str:
-    """Maps the 'location' field to ModSecurity variables."""
-    location = location.lower()  # Normalize to lowercase
-    if location == "request-uri":
-        return "REQUEST_URI"
-    elif location == "query-string":
-        return "ARGS"  # Or ARGS_GET, depending on your needs
-    elif location == "user-agent":
-        return "REQUEST_HEADERS:User-Agent"
-    elif location == "host":
-        return "REQUEST_HEADERS:Host"
-    elif location == "referer":
-        return "REQUEST_HEADERS:Referer"
-    elif location == "content-type":
-        return "REQUEST_HEADERS:Content-Type"
-    # Add other location mappings as needed
-    else:
-        logger.warning(f"Unknown location '{location}', defaulting to REQUEST_URI")
-        return "REQUEST_URI"  # Default variable
+def _write(index: int, rule: Dict) -> Tuple[Decision, Optional[str]]:
+    """
+    Decides what to do with one record, and writes the directive if it is written.
+
+    Returns:
+        The decision, and the `SecRule` text (None when the rule is not written).
+    """
+    directive = rule.get("directive", "SecRule")
+    if directive != "SecRule":
+        return Decision(index, False, "not-a-rule", f"{directive} {rule.get('target_rule_id')}"), None
+
+    operator = operator_of(rule)
+    if operator["negated"] or operator["name"] != "rx":
+        name = ("!" if operator["negated"] else "") + "@" + operator["name"]
+        return Decision(index, False, "operator-unsupported", name), None
+
+    argument = operator["argument"]
+    expression = modsecurity_unquote(argument)
+    problem = dialects.check(Apache.capabilities.dialect, expression)
+    if problem:
+        return Decision(index, False, "invalid-regex", problem), None
+
+    location = rule.get("location", "request-uri").lower()
+    if location not in LOCATIONS:
+        return Decision(index, False, "location-unsupported", location), None
+
+    if not blocks(rule):
+        return Decision(index, False, "not-blocking", str(rule.get("action"))), None
+
+    rule_id = str(rule.get("id", "no_id"))
+    if not rule_id.isdigit():
+        return Decision(index, False, "not-a-rule", "it has no id"), None
+
+    variable, field, view = LOCATIONS[location]
+    lowered = "lowercase" in (rule.get("transformations") or [])
+    values = view or (lambda entry: [entry[field]])
+    seen = (lambda entry: [_ascii_lower(v) for v in values(entry)]) if lowered else values
+    ordinary = first_ordinary_match(expression, field, False, seen)
+    if ordinary is not None:
+        return Decision(index, False, "matches-benign-traffic", ordinary), None
+
+    severity = rule.get("severity", "medium")
+    transformations = "t:none" + (",t:lowercase" if lowered else "")
+    category = rule.get("category", "generic").upper()
+    text = (f'SecRule {variable} "@rx {argument}" '
+            f'"id:{ID_OFFSET + int(rule_id)},phase:{rule.get("phase") or 2},{transformations},'
+            f'{BLOCK if severity == "high" else RECORD},'
+            f"msg:'{category}, CRS {rule_id}',"
+            f"severity:'{rule.get('crs_severity') or SEVERITY.get(severity, 'WARNING')}'\"\n")
+    return Decision(index, True, location=location, pattern=argument), text
 
 
 def generate_apache_waf(rules: List[Dict], crs_ref: str = "latest") -> Compiled:
-    """Builds the Apache ModSecurity configuration files, one per category."""
+    """Builds the ModSecurity configuration, one file for each category of CRS."""
     decisions: List[Decision] = []
-
-    # Rules grouped by category. A dict keeps what was added in the order it was
-    # added and still drops duplicates. A set did the second and not the first,
-    # so the order of a file followed the hash seed of the run that wrote it.
-    categorized_rules: Dict[str, Dict[str, None]] = defaultdict(dict)
-    rule_id_counter = 9000000  # Start with a high ID range (OWASP CRS convention)
-
-
+    # Rules by category, in the order of the IR, which is the order of CRS.
+    categorized: Dict[str, List[str]] = defaultdict(list)
     for index, rule in enumerate(rules):
-        rule_id = rule.get("id", "no_id")  # Get rule ID
-        if not isinstance(rule_id, int):  # check if is an int
-            # Extract ID from rule and convert to an integer
-            match = re.search(r'id:(\d+)', rule_id)
-            if match:
-                try:
-                    rule_id = int(match.group(1))
-                except ValueError:
-                    logger.warning(f"Invalid rule ID '{match.group(1)}' in rule: {rule}. Using generated ID.")
-                    rule_id = rule_id_counter
-                    rule_id_counter += 1
-            else:
-                rule_id = rule_id_counter
-                rule_id_counter += 1
+        decision, text = _write(index, rule)
+        decisions.append(decision)
+        if text is not None:
+            categorized[rule.get("category", "generic").lower()].append(text)
 
-        category = rule.get("category", "generic").lower()
-        pattern = rule["pattern"]
-        location = rule.get("location", "REQUEST_URI")  # Set a default variable
-        severity = rule.get("severity", "CRITICAL").upper()  # CRITICAL, ERROR, WARNING, NOTICE
-        # --- Operator Handling ---
-        operator_used = "Unknown"  # Default
-        for op in SUPPORTED_OPERATORS:
-            if pattern.startswith(op):
-                operator_used = SUPPORTED_OPERATORS[op]
-                break  # Stop after finding the *first* matching operator
-
-        # Skip unsupported patterns.
-        unsupported = [op for op in UNSUPPORTED_FILE_OPERATORS if op in pattern]
-        if unsupported:
-            logger.info(f"[!] Skipping unsupported pattern: {pattern}")
-            decisions.append(Decision(index, False, "operator-unsupported", unsupported[0]))
-            continue
-
-        sanitized_pattern = _sanitize_pattern(pattern)
-        if not sanitized_pattern:
-            decisions.append(Decision(index, False, "empty-pattern",
-                                      "nothing is left once the operator is removed"))
-            continue
-        if not validate_regex(sanitized_pattern):
-            decisions.append(Decision(index, False, "invalid-regex", "Python's re does not compile it"))
-            continue  # Skip invalid regexes
-
-        # Determine ModSecurity variables based on 'location'
-        variables = _determine_variables(location)
-
-        # --- Rule Construction ---
-        # Build the ModSecurity rule string
-        rule_str = MODSEC_RULE_TEMPLATE.format(
-            variables=variables,
-            pattern=re.escape(sanitized_pattern),  # Escape for ModSecurity
-            rule_id=rule_id,
-            category=category.upper(),  # Use uppercase for category
-            severity=severity,
-            phase=2,  # Phase 2 (request body processing) is common, adjust if needed
-            actions=DEFAULT_ACTIONS,
-        )
-        categorized_rules[category][rule_str] = None
-        # A location the backend does not know is matched on REQUEST_URI.
-        decisions.append(Decision(
-            index, True,
-            location=location.lower() if location.lower() in _LOCATIONS else "request-uri",
-            pattern=re.escape(sanitized_pattern)))
-
-
-    # --- Files ---
-    # Rules go to per-category files.  This is good for organization.
     files: Dict[str, str] = {}
-    for category, rule_set in categorized_rules.items():
+    for category, written in categorized.items():
         files[f"{category}.conf"] = "".join([
             provenance_header(crs_ref, Apache.title),
-            f"# ModSecurity Rules for Category: {category.upper()}\n",
-            "SecRuleEngine On\n\n",  # Enable the rule engine
-            *rule_set,
+            f"# ModSecurity rules for category: {category.upper()}\n",
+            f"# CRS rule N is rule {ID_OFFSET} + N. `SecRuleEngine` is yours to set.\n\n",
+            *written,
         ])
-        logger.info(f"Generated {category}.conf ({len(rule_set)} rules)")
+        logger.info(f"Generated {category}.conf ({len(written)} rules)")
     return Compiled(files, decisions)
 
 
@@ -164,12 +176,13 @@ class Apache(Backend):
     name = "apache"
     title = "Apache (ModSecurity)"
 
-    # ModSecurity can apply transformations and keeps the operator, and this
-    # backend writes neither: `t:none`, and the pattern escaped into a literal.
+    # What is written is what is declared, and tests/test_coverage.py holds one to the
+    # other. ModSecurity could apply every transformation and keep every operator, and
+    # this backend writes `@rx` and `t:lowercase` and nothing else yet.
     capabilities = Capabilities(
         dialect="pcre",
         operators=frozenset({"rx"}),
-        transformations=frozenset(),
+        transformations=frozenset({"lowercase"}),
         case_insensitive=True,
         locations={
             "request-uri": Target("REQUEST_URI"),
@@ -177,6 +190,7 @@ class Apache(Backend):
                 "ARGS", "the parsed argument values: their names and the raw query string "
                         "are other variables",
                 frozenset({"ARGS_NAMES", "QUERY_STRING"})),
+            "request-filename": Target("REQUEST_FILENAME"),
             "user-agent": Target("REQUEST_HEADERS:User-Agent"),
             "host": Target("REQUEST_HEADERS:Host"),
             "referer": Target("REQUEST_HEADERS:Referer"),

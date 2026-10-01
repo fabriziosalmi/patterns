@@ -43,8 +43,10 @@ Both are deliberately unexotic. The point is not to be exhaustive, it is to be
 the kind of traffic a small site sees in an hour.
 """
 
+import json
 import re
-from typing import Dict, List, Optional
+import urllib.parse
+from typing import Callable, Dict, Iterable, List, Optional
 
 # What every entry sends unless it says otherwise. A real browser, a real host.
 _DEFAULTS = {
@@ -427,7 +429,41 @@ ATTACKS: List[Dict[str, str]] = [
 ]
 
 
-def first_ordinary_match(pattern: str, field: str, ignore_case: bool = False) -> Optional[str]:
+def _leaves(value) -> List[str]:
+    """The scalar values of a parsed JSON document, as text, in order."""
+    if isinstance(value, dict):
+        return [leaf for item in value.values() for leaf in _leaves(item)]
+    if isinstance(value, list):
+        return [leaf for item in value for leaf in _leaves(item)]
+    return [] if value is None else [str(value)]
+
+
+def arguments(entry: Dict[str, str]) -> List[str]:
+    """
+    What ModSecurity's `ARGS` holds for a request: the decoded value of each parameter
+    of the query string, and of a form body. It does not hold the raw string nginx's
+    `$args` is, and a rule that reads it sees `<script>` where the request said `%3Cscript%3E`.
+
+    A JSON body is in it too, one value for each leaf, when the deployment has
+    ModSecurity's JSON body processor on (the recommended configuration does, for
+    `application/json`). Whether it has is not for a rule file to know, so a rule is
+    checked as if it did: that can leave a rule out that never would have refused
+    anything, and cannot let one in that refuses an ordinary JSON request.
+    """
+    found = [value for _, value in urllib.parse.parse_qsl(entry["args"], keep_blank_values=True)]
+    content_type = entry["content_type"].lower()
+    if entry["body"] and content_type.startswith("application/x-www-form-urlencoded"):
+        found += [value for _, value in urllib.parse.parse_qsl(entry["body"], keep_blank_values=True)]
+    elif entry["body"] and "json" in content_type:
+        try:
+            found += _leaves(json.loads(entry["body"]))
+        except ValueError:
+            pass
+    return found
+
+
+def first_ordinary_match(pattern: str, field: str, ignore_case: bool = False,
+                         view: Optional[Callable[[Dict[str, str]], Iterable[str]]] = None) -> Optional[str]:
     """
     The name of the first ordinary request whose `field` an expression matches.
 
@@ -444,19 +480,22 @@ def first_ordinary_match(pattern: str, field: str, ignore_case: bool = False) ->
         pattern: The regular expression, as it will be written.
         field: A key of an entry: `args`, `user_agent`, ...
         ignore_case: Whether the match ignores case.
+        view: What the target matches the pattern against, for a target that does not
+            see the field as it was sent: the values of a request, from the entry. By
+            default, the field itself.
 
     Returns:
         The `name` of the first matching request, None if it matches none, or if
         Python cannot compile it (an expression only the target's engine has).
     """
-    from patterns.dialects import python_equivalent  # here: dialects imports nothing from this module
+    from patterns.dialects import python_compile  # here: dialects imports nothing from this module
 
-    try:
-        expression = re.compile(python_equivalent(pattern), re.IGNORECASE if ignore_case else 0)
-    except re.error:
+    expression = python_compile(pattern, re.IGNORECASE if ignore_case else 0)
+    if expression is None:
         return None
     for entry in BENIGN:
-        if expression.search(entry[field]):
+        values = view(entry) if view else [entry[field]]
+        if any(expression.search(value) for value in values):
             return entry["name"]
     return None
 

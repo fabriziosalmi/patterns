@@ -16,7 +16,7 @@ A source that cannot be fetched is skipped. If none can, the script stops with a
 | Platform | File | Format |
 |----------|------|--------|
 | Nginx | `bots.conf` | `map $http_user_agent $bad_bot` |
-| Apache | `bots.conf` | ModSecurity `SecRule` directives |
+| Apache | `bots.conf` | One ModSecurity `SecRule` (`@rx`) per entry, each with an id of its own |
 | Traefik | `bots.toml` | Middleware regex replacements |
 | HAProxy | `bots.acl` | One `acl` line per entry |
 
@@ -115,15 +115,15 @@ Run through a real server, the list built straight from those sources refused Go
 So `badbots.py` leaves out any entry that an ordinary client matches. *Ordinary* is what [the corpus](https://github.com/fabriziosalmi/patterns/blob/main/patterns/corpus.py) says it is, the same one every CRS rule is checked against: the browsers, the search engines (Google, Bing, DuckDuckGo, Baidu, Yandex, Apple), the link previews, the monitors, and an internal service. Each file starts with a comment line for every entry left out and the client it would have refused. Today that is the `bot|crawl|spider|...` catch-all, `Pingdom`, `StatusCake`, `WhatsApp`, `facebookexternalhit`, `Disco`, `baidu.com`, `Yandex(?!Search)`, `Apache-HttpClient` and `oBot`, which is a piece of the word `robots` in Slack's agent.
 
 ::: tip What the tests send
-The nginx, Traefik and HAProxy tests start the real server with the written list, and send it the bots the list is made of (a scanner, AhrefsBot, SemrushBot, MJ12bot), every client of the corpus a site wants, and the HTTP libraries. The list has to refuse the first, none of the second, and the third.
+The nginx, Apache, Traefik and HAProxy tests start the real server with the written list, and send it the bots the list is made of (a scanner, AhrefsBot, SemrushBot, MJ12bot), every client of the corpus a site wants, and the HTTP libraries. The list has to refuse the first, none of the second, and the third.
 :::
 
 **HTTP libraries are refused on purpose.** `curl`, `python-requests` and `Go-http-client` are in the list, and a request that carries one of them as its User-Agent gets a 403, an ordinary one too. The first thing a scraper does is run one of them with its default agent, and that is what the list is for. If you serve an API to scripts, or monitor the site with `curl`, remove the entry, or whitelist the agent as below.
 
 Because the list now has fewer entries, a bot that only the catch-all caught is let through. The specific names the sources list are still refused.
 
-::: warning Apache, and what HAProxy reads
-The Apache `bots.conf` does not load: every rule has `id:3000`, and ModSecurity refuses a duplicate. Apache and HAProxy also read an entry as plain text (`@contains`, `hdr_sub`) where the sources wrote regular expressions, so an entry like `008\/` never matches `008/`. Both are tracked in [#80](https://github.com/fabriziosalmi/patterns/issues/80). HAProxy's `bots.acl` is a list of `acl` lines, so it loads as part of a `frontend`; as a pattern file, which is how the HAProxy page loads it, it matches nothing ([#68](https://github.com/fabriziosalmi/patterns/issues/68)).
+::: warning What HAProxy reads
+HAProxy reads an entry as plain text (`hdr_sub`) where the sources wrote regular expressions, so an entry like `008\/` never matches `008/`. It is tracked in [#80](https://github.com/fabriziosalmi/patterns/issues/80). HAProxy's `bots.acl` is a list of `acl` lines, so it loads as part of a `frontend`; as a pattern file, which is how the HAProxy page loads it, it matches nothing ([#68](https://github.com/fabriziosalmi/patterns/issues/68)).
 :::
 
 ## Customization
