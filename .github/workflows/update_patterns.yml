@@ -349,21 +349,46 @@ jobs:
 
         echo "Generated release_notes.md ($(wc -l < release_notes.md) lines)"
 
-    # The tag is new every time and is never deleted. `make_latest` is what makes
-    # `releases/latest/download/...` point here: GitHub's name for the newest, not a
-    # tag that is replaced.
+    # The tag is new every time and is never deleted. `--latest` is what makes
+    # `releases/latest/download/...` point here: GitHub's name for the newest, not a tag
+    # that is replaced.
+    #
+    # The release is made as a draft, given every file, checked to be complete, and only
+    # then published. That order is the one GitHub's "Immutable releases" setting asks for:
+    # a release that is immutable once published cannot be given a file afterwards, and a
+    # draft can. It is also the safer order without the setting: a night that fails half
+    # way through the upload leaves a draft nobody sees, not a release with files missing.
     - name: 🚀 Publish release
       if: success() && github.ref == 'refs/heads/main' && steps.package.outputs.publish == 'true'
-      uses: softprops/action-gh-release@v3
-      with:
-        tag_name: ${{ steps.package.outputs.tag }}
-        target_commitish: ${{ steps.package.outputs.commit }}
-        name: WAF rules ${{ steps.package.outputs.tag }}
-        body_path: release_notes.md
-        files: dist/*
-        make_latest: 'true'
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        TAG: ${{ steps.package.outputs.tag }}
+        COMMIT: ${{ steps.package.outputs.commit }}
+      run: |
+        set -euo pipefail
+        gh release create "$TAG" --draft --target "$COMMIT" \
+          --title "WAF rules $TAG" --notes-file release_notes.md dist/*
+
+        # A draft has no tag yet, so it is found by listing, and everything after goes
+        # through its id.
+        ID=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+          --jq ".[] | select(.draft and .tag_name == \"$TAG\") | .id")
+        if [ -z "$ID" ] || [ "$(echo "$ID" | wc -l)" -ne 1 ]; then
+          echo "Expected one draft release for $TAG, found: '$ID'" >&2
+          exit 1
+        fi
+
+        # Complete, by name, before anybody can see it.
+        ls dist | sort > expected-assets.txt
+        gh api "repos/$GITHUB_REPOSITORY/releases/$ID" --jq '.assets[].name' | sort > uploaded-assets.txt
+        if ! diff expected-assets.txt uploaded-assets.txt; then
+          echo "The draft $TAG does not hold every file: it is left unpublished." >&2
+          exit 1
+        fi
+
+        gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$ID" -F draft=false -f make_latest=true \
+          --jq '"Published \(.tag_name) with \(.assets | length) files. immutable: \(.immutable), draft: \(.draft), \(.html_url)"' \
+          | tee -a "$GITHUB_STEP_SUMMARY"
 
     - name: 🧹 Clean Up (Optional)
       if: always()  # Run cleanup even on failure
