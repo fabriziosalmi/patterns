@@ -31,6 +31,14 @@ A rule is written when it is something this target can express and refuse with:
     unlike ModSecurity's, not `%uXXXX`: it is applied, and not declared, so the matrix
     still says the rule is approximate. The others (`htmlEntityDecode`, `jsDecode`, ...)
     HAProxy has no converter for.
+  * `@pm` and `@pmFromFile`, as `acl x fetch -m sub -i -f file`: a substring, case ignored,
+    for each line of a phrase file, which is what ModSecurity does with them (measured in
+    HAProxy 3.4: ASCII is folded, other bytes are matched as they are). The files are the
+    ones CRS ships, `restricted-files.data` among them, and are written next to the
+    expressions; an inline `@pm` gets one of its own, `pm-<id>.data`. It is a scan of the
+    list for each request, not an index: about a millisecond for the five largest lists
+    on three fetches each. A phrase a pattern file cannot hold as written (one that starts
+    with `#`, or with blank space, which HAProxy drops) keeps the whole rule out.
   * the fetch the rule's location is, one of those the corpus can say is ordinary.
   * only severity `high`: the rule refuses, and HAProxy has no way to write a pattern
     file that only records.
@@ -40,6 +48,7 @@ section), `waf.cfg` is pasted into the `frontend`.
 """
 
 import logging
+import re
 import urllib.parse
 from collections import defaultdict
 from typing import Callable, Dict, List, Optional, Tuple
@@ -51,9 +60,10 @@ from patterns.backends._common import (
     haproxy_pattern,
     modsecurity_unquote,
     operator_of,
+    phrases_of,
     provenance_header,
 )
-from patterns.corpus import first_ordinary_match
+from patterns.corpus import first_ordinary_match, first_ordinary_phrase
 from patterns.ir import IR
 
 logger = logging.getLogger(__name__)
@@ -93,9 +103,33 @@ def blocks(rule: Dict) -> bool:
     return "action" not in rule or rule["action"] in BLOCKING_ACTIONS
 
 
-def _converters(rule: Dict) -> List[str]:
-    """The transformations of a rule that HAProxy has a converter for, in the rule's order."""
-    return list(dict.fromkeys(t for t in (rule.get("transformations") or []) if t in CONVERTERS))
+def _converters(rule: Dict, phrases: bool = False) -> List[str]:
+    """
+    The transformations of a rule that HAProxy has a converter for, in the rule's order.
+
+    A phrase list is matched with `-i`, which is the case-insensitive match `@pm` always is,
+    so `lowercase` has nothing to add there.
+    """
+    return list(dict.fromkeys(t for t in (rule.get("transformations") or [])
+                              if t in CONVERTERS and not (phrases and t == "lowercase")))
+
+
+def _unwritable(phrases: List[str]) -> Optional[str]:
+    """
+    The first phrase a pattern file cannot hold as it is, or None.
+
+    HAProxy skips a line that starts with `#` and drops the blank space at the start of
+    one, and `-m sub` has no way to escape either, so such a phrase would be another phrase.
+    """
+    for phrase in phrases:
+        if phrase[:1] == "#" or phrase != phrase.strip() or "\n" in phrase or "\r" in phrase:
+            return phrase
+    return None
+
+
+def _stem(name: str) -> str:
+    """A phrase file's name as part of an ACL name: `restricted-files.data` -> `restricted_files`."""
+    return re.sub(r"[^A-Za-z0-9]+", "_", name[:-5] if name.endswith(".data") else name)
 
 
 def _name(location: str, applied: List[str]) -> str:
@@ -103,17 +137,25 @@ def _name(location: str, applied: List[str]) -> str:
     return "-".join([location] + [CONVERTERS[t][1] for t in applied])
 
 
-def _write(index: int, rule: Dict) -> Tuple[Decision, Optional[Tuple[str, str]]]:
+# What a rule that is written adds: a line of a pattern file, in the group of rules matched
+# the same way, or a phrase list and the ACL that loads it.
+Pattern = Tuple[str, str]               # the group, and the lines it adds
+Phrases = Tuple[str, str, str, List[str]]  # the group, the ACL's name, the file's name, the phrases
+
+
+def _write(index: int, rule: Dict, data_files: Dict[str, List[str]]
+           ) -> Tuple[Decision, Optional[Pattern], Optional[Phrases]]:
     """
     Decides what to do with one record.
 
     Returns:
-        The decision, and for a rule that is written the name of its group and the
-        lines it adds to that group's pattern file (None when it is not written).
+        The decision; for an expression the name of its group and the lines it adds to that
+        group's pattern file; for a phrase list the group, the name of the ACL, the name of
+        the phrase file and its phrases. A rule that is not written has none of them.
     """
     directive = rule.get("directive", "SecRule")
     if directive != "SecRule":
-        return Decision(index, False, "not-a-rule", f"{directive} {rule.get('target_rule_id')}"), None
+        return Decision(index, False, "not-a-rule", f"{directive} {rule.get('target_rule_id')}"), None, None
 
     chain = rule.get("chain")
     if chain:
@@ -121,35 +163,46 @@ def _write(index: int, rule: Dict) -> Tuple[Decision, Optional[Tuple[str, str]]]
         # rule: the head of 920480 is any `charset=` in a Content-Type, and the link that makes
         # it a rule (the charset is not one that is allowed) is a transaction variable no target
         # has. Written alone it refused `application/json; charset=utf-8`, in all four targets.
-        return Decision(index, False, "chain-unsupported", f"{chain['role']} of {chain['head']}"), None
+        return Decision(index, False, "chain-unsupported", f"{chain['role']} of {chain['head']}"), None, None
 
     operator = operator_of(rule)
-    if operator["negated"] or operator["name"] != "rx":
+    phrases = phrases_of(operator, data_files)
+    expression = None
+    if phrases is not None:
+        if not phrases:
+            return Decision(index, False, "empty-pattern", "the phrase list has no phrases"), None, None
+        odd = _unwritable(phrases)
+        if odd is not None:
+            return (Decision(index, False, "invalid-regex",
+                             f"a pattern file cannot hold the phrase {odd[:40]!r} as it is"), None, None)
+    elif operator["negated"] or operator["name"] != "rx":
         name = ("!" if operator["negated"] else "") + "@" + operator["name"]
-        return Decision(index, False, "operator-unsupported", name), None
-
-    expression = modsecurity_unquote(operator["argument"])
-    if not expression:
-        return Decision(index, False, "empty-pattern", "nothing is left of the pattern"), None
-    if "\n" in expression or "\r" in expression:
-        return Decision(index, False, "invalid-regex", "a pattern file holds a line to a pattern"), None
-    problem = dialects.check(HAProxy.capabilities.dialect, expression)
-    if problem:
-        return Decision(index, False, "invalid-regex", problem), None
+        detail = (f"{name} (the IR has no such phrase list)"
+                  if operator["name"] == "pmFromFile" and not operator["negated"] else name)
+        return Decision(index, False, "operator-unsupported", detail), None, None
+    else:
+        expression = modsecurity_unquote(operator["argument"])
+        if not expression:
+            return Decision(index, False, "empty-pattern", "nothing is left of the pattern"), None, None
+        if "\n" in expression or "\r" in expression:
+            return Decision(index, False, "invalid-regex", "a pattern file holds a line to a pattern"), None, None
+        problem = dialects.check(HAProxy.capabilities.dialect, expression)
+        if problem:
+            return Decision(index, False, "invalid-regex", problem), None, None
 
     location = rule.get("location", "request-uri").lower()
     if location not in LOCATIONS:
-        return Decision(index, False, "location-unsupported", location), None
+        return Decision(index, False, "location-unsupported", location), None, None
 
     if not blocks(rule):
-        return Decision(index, False, "not-blocking", str(rule.get("action"))), None
+        return Decision(index, False, "not-blocking", str(rule.get("action"))), None, None
 
     severity = rule.get("severity", "medium")
     if severity != "high":
-        return Decision(index, False, "severity-below-blocking", severity), None
+        return Decision(index, False, "severity-below-blocking", severity), None, None
 
     fetch, field = LOCATIONS[location]
-    applied = _converters(rule)
+    applied = _converters(rule, phrases is not None)
 
     def seen(entry: Dict[str, str]) -> List[str]:
         value = entry[field]
@@ -157,13 +210,24 @@ def _write(index: int, rule: Dict) -> Tuple[Decision, Optional[Tuple[str, str]]]
             value = CONVERTERS[transformation][2](value)
         return [value]
 
-    ordinary = first_ordinary_match(expression, field, False, seen)
+    if phrases is not None:
+        ordinary = first_ordinary_phrase(phrases, field, seen)
+    else:
+        ordinary = first_ordinary_match(expression, field, False, seen)
     if ordinary is not None:
-        return Decision(index, False, "matches-benign-traffic", ordinary), None
+        return Decision(index, False, "matches-benign-traffic", ordinary), None, None
+
+    group = _name(location, applied)
+    if phrases is not None:
+        rule_id = str(rule.get("id", "no_id"))
+        name = (operator["argument"].strip() if operator["name"] == "pmFromFile"
+                else f"pm-{rule_id if rule_id.isdigit() else 'i' + str(index)}.data")
+        return (Decision(index, True, location=location), None,
+                (group, f"{_acl_name(group)}_{_stem(name)}", name, phrases))
 
     category = rule.get("category", "generic").lower()
     lines = f"# CRS {rule.get('id', 'no_id')} ({category})\n{haproxy_pattern(expression)}\n"
-    return Decision(index, True, location=location, pattern=expression), (_name(location, applied), lines)
+    return Decision(index, True, location=location, pattern=expression), (group, lines), None
 
 
 def _acl_name(group: str) -> str:
@@ -175,20 +239,28 @@ def _fetch(location: str, applied: List[str]) -> str:
     return ",".join([LOCATIONS[location][0]] + [CONVERTERS[t][0] for t in applied])
 
 
-def generate_haproxy_waf(rules: List[Dict], crs_ref: str = "latest") -> Compiled:
-    """Builds the pattern files and `waf.cfg`."""
+def generate_haproxy_waf(rules: List[Dict], crs_ref: str = "latest",
+                         data_files: Optional[Dict[str, List[str]]] = None) -> Compiled:
+    """Builds the pattern files, the phrase files and `waf.cfg`."""
+    data_files = data_files or {}
     decisions: List[Decision] = []
     groups: Dict[str, List[str]] = defaultdict(list)
     fetches: Dict[str, str] = {}
+    # The ACLs that load a phrase file: name -> (the sample expression, the file).
+    lists: Dict[str, Tuple[str, str]] = {}
+    shipped: Dict[str, List[str]] = {}
 
     for index, rule in enumerate(rules):
-        decision, written = _write(index, rule)
+        decision, written, phrase_list = _write(index, rule, data_files)
         decisions.append(decision)
-        if written is None:
-            continue
-        group, lines = written
-        groups[group].append(lines)
-        fetches[group] = _fetch(decision.location, _converters(rule))
+        if written is not None:
+            group, lines = written
+            groups[group].append(lines)
+            fetches[group] = _fetch(decision.location, _converters(rule))
+        if phrase_list is not None:
+            group, acl, name, phrases = phrase_list
+            lists[acl] = (_fetch(decision.location, _converters(rule, True)), name)
+            shipped[name] = phrases
 
     files: Dict[str, str] = {}
     header = provenance_header(crs_ref, HAProxy.title)
@@ -199,18 +271,32 @@ def generate_haproxy_waf(rules: List[Dict], crs_ref: str = "latest") -> Compiled
             f"# Loaded by `acl {_acl_name(group)}` in waf.cfg.\n\n",
             *groups[group],
         ])
+    # The phrase files, as CRS ships them: one phrase to a line. HAProxy skips the comment lines.
+    for name in sorted(shipped):
+        files[name] = "".join([
+            header,
+            "# A phrase list: one phrase to a line, each looked for in the value with case ignored\n"
+            "# (`-m sub -i`), as ModSecurity's `@pm` does. Loaded by an `acl` in waf.cfg.\n\n",
+            *[phrase + "\n" for phrase in shipped[name]],
+        ])
 
     cfg = [header,
-           "# Paste these lines into a `frontend` (or `listen`) section, and put the pattern files in\n"
-           f"# {WAF_DIR}/. HAProxy has no include, so this is not a file to load on its own.\n\n"]
+           "# Paste these lines into a `frontend` (or `listen`) section, and put the pattern files and\n"
+           f"# the phrase lists in {WAF_DIR}/. HAProxy has no include, so this is not a file to load on\n"
+           "# its own.\n\n"]
     for group in sorted(groups):
         cfg.append(f"acl {_acl_name(group)} {fetches[group]} -m reg -f {WAF_DIR}/waf-{group}.acl\n")
-    if groups:
-        cfg.append("http-request deny deny_status 403 if "
-                   + " or ".join(_acl_name(g) for g in sorted(groups)) + "\n")
+    for acl in sorted(lists):
+        sample, name = lists[acl]
+        cfg.append(f"acl {acl} {sample} -m sub -i -f {WAF_DIR}/{name}\n")
+    names = [_acl_name(g) for g in sorted(groups)] + sorted(lists)
+    if names:
+        cfg.append("http-request deny deny_status 403 if " + " or ".join(names) + "\n")
     files["waf.cfg"] = "".join(cfg)
     for group in sorted(groups):
         logger.info(f"Generated waf-{group}.acl ({len(groups[group])} patterns)")
+    for name in sorted(shipped):
+        logger.info(f"Generated {name} ({len(shipped[name])} phrases)")
     return Compiled(files, decisions)
 
 
@@ -224,7 +310,7 @@ class HAProxy(Backend):
     # decode `%uXXXX`, which ModSecurity's does, so the matrix keeps the loss.
     capabilities = Capabilities(
         dialect="pcre",
-        operators=frozenset({"rx"}),
+        operators=frozenset({"rx", "pm", "pmFromFile"}),
         transformations=frozenset({"lowercase"}),
         case_insensitive=True,
         locations={
@@ -245,4 +331,4 @@ class HAProxy(Backend):
     )
 
     def compile(self, ir: IR) -> Compiled:
-        return generate_haproxy_waf(ir.rules, ir.crs_ref)
+        return generate_haproxy_waf(ir.rules, ir.crs_ref, ir.data_files)

@@ -54,7 +54,12 @@ BOT_LINES = [f"acl bad_bot hdr(user-agent) -m reg -i -f {WAF_DIR}/bots.acl",
 # What the generated files do today. A rule that matches an ordinary request is not
 # written, so none is refused; the floors are below what the rules refuse now, and are
 # there to catch a collapse (see tests/test_nginx_blocking.py).
-EXPECTED: Dict = {"loads": True, "benign": [], "floor_clear": 10, "floor_encoded": 8}
+EXPECTED: Dict = {"loads": True, "benign": [], "floor_clear": 15, "floor_encoded": 12,
+                  # What only a phrase list catches (#52, #92): CRS refuses `/.env` and `/.git/config` with
+                  # `@pmFromFile restricted-files.data` on the path, and a scanner's User-Agent with
+                  # `@pmFromFile scanners-user-agents.data`, which HAProxy reads with `-m sub -i -f`. A named
+                  # list is a stronger guard than a floor: the floor would pass if some other rule took their place.
+                  "must_catch": ["sensitive file", "git directory", "scanner user agent"]}
 
 # For the known-good files: they load, refuse nothing ordinary, and refuse the scanner and
 # the script tag, in clear and (the query string is decoded) percent-encoded.
@@ -138,6 +143,11 @@ def exercise(waf_dir: Path, expected: Dict, check: c.Checker) -> None:
             traffic = c.measure(PORT)
         c.report_traffic(check, traffic, expected["benign"], expected["floor_clear"],
                          expected["floor_encoded"])
+        if expected.get("must_catch"):
+            print("\nwhat only a phrase list catches")
+            for label, caught in (("in clear", traffic.caught_clear), ("percent-encoded", traffic.caught_encoded)):
+                check.expect(f"{label}: {', '.join(expected['must_catch'])}",
+                             [n for n in expected["must_catch"] if n not in caught], [])
 
     print("\nthe bad-bot list (bots.acl)")
     if not (waf_dir / "bots.acl").is_file():

@@ -208,9 +208,10 @@ check("nginx: map keys in waf_maps.conf: a rule is one, or a few for a list of p
 check("apache: SecRule lines in the category files",
       sum(len(re.findall(r"^SecRule ", text, re.M)) for text in compiled["apache"].files.values()),
       written("apache"))
-check("haproxy: patterns in the pattern files",
+check("haproxy: patterns in the pattern files, and an acl for each phrase list a rule reads",
       sum(len([l for l in text.splitlines() if l and not l.startswith("#")])
-          for name, text in compiled["haproxy"].files.items() if name.endswith(".acl")),
+          for name, text in compiled["haproxy"].files.items() if name.endswith(".acl"))
+      + len(re.findall(r" -m sub -i -f ", compiled["haproxy"].files["waf.cfg"])),
       written("haproxy"))
 check("traefik: expressions in middleware.toml",
       len(re.findall(r"^      ['\"]", compiled["traefik"].files["middleware.toml"], re.M)),
@@ -627,13 +628,17 @@ check("an empty filter is still a filter that refuses nothing",
 
 print("what the HAProxy backend writes")
 haproxy_records = [(d, R.rules[d.index]) for d in compiled["haproxy"].decisions if d.emitted]
-check("haproxy writes only @rx, not negated, that refuses and is `high`",
+check("haproxy writes only @rx, @pm and @pmFromFile, not negated, that refuse and are `high`",
       sorted({(r["operator"]["name"], r["operator"]["negated"], r["severity"]) for _, r in haproxy_records}),
-      [("rx", False, "high")])
+      [("pm", False, "high"), ("pmFromFile", False, "high"), ("rx", False, "high")])
 cfg = compiled["haproxy"].files["waf.cfg"]
 pattern_files = {n: t for n, t in compiled["haproxy"].files.items() if n.endswith(".acl")}
-check("every acl of waf.cfg loads a pattern file that exists",
-      sorted(re.findall(r"-f /etc/haproxy/waf/(\S+)$", cfg, re.M)), sorted(pattern_files))
+phrase_files = {n: t for n, t in compiled["haproxy"].files.items() if n.endswith(".data")}
+check("every acl of waf.cfg loads a pattern file or a phrase file that exists, and every file is loaded",
+      sorted(set(re.findall(r"-f /etc/haproxy/waf/(\S+)$", cfg, re.M))), sorted({*pattern_files, *phrase_files}))
+check("an expression is matched with `-m reg` and a phrase list with `-m sub -i`, never the other way",
+      sorted({(m, f.endswith(".acl")) for m, f in re.findall(r"-m (\w+)(?: -i)? -f /etc/haproxy/waf/(\S+)$", cfg, re.M)}),
+      [("reg", True), ("sub", False)])
 check("and the one deny names them all, in a line HAProxy takes (64 words at most)",
       (sorted(re.findall(r"^acl (\S+) ", cfg, re.M)) ==
        sorted(re.search(r"^http-request deny deny_status 403 if (.*)$", cfg, re.M).group(1).split(" or "))
@@ -643,8 +648,8 @@ check("a pattern file is one expression to a line, after a comment that names th
               for t in pattern_files.values()}), [True])
 from patterns.backends._common import haproxy_pattern, modsecurity_unquote  # noqa: E402
 check("haproxy: every expression is written as the engine reads it: unquoted as Apache unquotes, (?i) kept",
-      [r["id"] for _, r in haproxy_records
-       if haproxy_pattern(modsecurity_unquote(r["operator"]["argument"])) not in
+      [r["id"] for _, r in haproxy_records if r["operator"]["name"] == "rx"
+       and haproxy_pattern(modsecurity_unquote(r["operator"]["argument"])) not in
        "".join(pattern_files.values()).splitlines()], [])
 
 
@@ -701,6 +706,70 @@ check("a pattern file line: a leading or trailing space, tab or leading # is wri
 check("one that is escaped already is not escaped twice, and one that is not, with a backslash before it, is",
       [haproxy_pattern(v) for v in ("a\\ ", "a\\\\ ")], ["a\\ ", "a\\\\\\ "])
 
+print("what the HAProxy backend writes for a list of phrases")
+
+
+def haproxy_phrases(argument, name="pmFromFile", data=None, negated=False, **extra):
+    """What the HAProxy backend does with one phrase rule made for the purpose, and the files it writes."""
+    record = rule(operator={"name": name, "negated": negated, "argument": argument}, **extra)
+    one = backends.get("haproxy").compile(ir.IR(rules=[record], data_files=data or {}))
+    d = one.decisions[0]
+    return (d.emitted, d.reason, d.detail), one.files
+
+
+def phrase_lines(text):
+    return [l for l in text.splitlines() if l and not l.startswith("#")]
+
+
+inline, files_ = haproxy_phrases("zqxjk-one zq.two", "pm")
+check("haproxy: @pm is written as a phrase file of its own, which an acl loads with a substring match, case ignored",
+      (inline[0], sorted(files_), "acl waf_query_string_pm_1 query -m sub -i -f /etc/haproxy/waf/pm-1.data\n"
+       in files_["waf.cfg"], phrase_lines(files_["pm-1.data"])), (True, ["pm-1.data", "waf.cfg"], True, ["zqxjk-one", "zq.two"]))
+listed, files_ = haproxy_phrases("words.data", data=WORDS)
+check("@pmFromFile is written with the file CRS names, shipped with the rules",
+      (listed[0], sorted(files_), "-m sub -i -f /etc/haproxy/waf/words.data\n" in files_["waf.cfg"]),
+      (True, ["waf.cfg", "words.data"], True))
+check("the file is a phrase to a line after a comment, which HAProxy skips, in the order CRS has them",
+      phrase_lines(files_["words.data"]), WORDS["words.data"])
+check("and the one deny names the acl",
+      "http-request deny deny_status 403 if waf_query_string_words\n" in files_["waf.cfg"], True)
+check("a phrase list the IR does not have is not guessed at",
+      haproxy_phrases("gone.data", data=WORDS)[0], (False, "operator-unsupported", "@pmFromFile (the IR has no such phrase list)"))
+check("an empty one is not written", haproxy_phrases("e.data", data={"e.data": []})[0][:2], (False, "empty-pattern"))
+check("a negated one is not: it is not what a rule that refuses can say",
+      haproxy_phrases("zqxjk", "pm", negated=True)[0][:2], (False, "operator-unsupported"))
+check("one an ordinary request holds is not written, whatever the case: `Googlebot` in a User-Agent",
+      haproxy_phrases("GOOGLEBOT zqxjk", "pm", location="User-Agent")[0][:2], (False, "matches-benign-traffic"))
+check("and a phrase that is last in a long list keeps the whole rule out: it is written whole or not at all",
+      haproxy_phrases("big.data", data={"big.data": late}, location="User-Agent")[0][:2], (False, "matches-benign-traffic"))
+check("a phrase list is looked for in the query string as HAProxy holds it: raw, `gr%C3%BC%C3%9Fe` is not `grüße`",
+      (haproxy_phrases("w.data", data={"w.data": ["grüße"]}, location="Query-String")[0][:2],
+       haproxy_phrases("w.data", data={"w.data": ["grüße"]}, location="Query-String",
+                       transformations=["urlDecodeUni"])[0][:2]),
+      ((True, None), (False, "matches-benign-traffic")))
+check("a rule that declares `urlDecodeUni` has the converter on the fetch of its acl, and `lowercase` has nothing to add",
+      ("query,url_dec(1) -m sub -i" in haproxy_phrases("words.data", data=WORDS, transformations=["urlDecodeUni", "lowercase"])[1]["waf.cfg"],
+       ",lower" in haproxy_phrases("words.data", data=WORDS, transformations=["lowercase"])[1]["waf.cfg"]),
+      (True, False))
+check("a phrase a pattern file cannot hold as it is keeps the rule out: one that starts with `#`, or with blank space",
+      [haproxy_phrases("w.data", data={"w.data": ["zqxjk", odd]})[0][:2] for odd in ("#zq", " zq", "zq ", "\tzq")],
+      [(False, "invalid-regex")] * 4)
+check("and one with the same characters inside is fine: `a#b`, `a b`",
+      [haproxy_phrases("w.data", data={"w.data": ["zq" + inside]})[0][:2] for inside in ("a#b", "a b", "a\\b")],
+      [(True, None)] * 3)
+check("one list read by two rules, on two fetches, is shipped once and loaded by two acls",
+      (lambda out: (sorted(out.files), len(re.findall(r"-f /etc/haproxy/waf/words.data$", out.files["waf.cfg"], re.M))))(
+          backends.get("haproxy").compile(ir.IR(rules=[
+              rule("1", operator={"name": "pmFromFile", "negated": False, "argument": "words.data"}),
+              rule("2", operator={"name": "pmFromFile", "negated": False, "argument": "words.data"},
+                   location="User-Agent")], data_files=WORDS))),
+      (["waf.cfg", "words.data"], 2))
+check("only the phrase files of rules that are written are shipped",
+      sorted(backends.get("haproxy").compile(ir.IR(rules=[
+          rule("1", operator={"name": "pmFromFile", "negated": False, "argument": "words.data"}),
+          rule("2", action="pass", operator={"name": "pmFromFile", "negated": False, "argument": "other.data"})],
+          data_files={"words.data": ["zqxjk"], "other.data": ["zqxjl"]})).files), ["waf.cfg", "words.data"])
+
 try:
     import tomllib
 except ImportError:  # before 3.11
@@ -728,7 +797,7 @@ check("what each backend declares it can express is what is shown above and noth
       {"nginx": ("pcre", ["pm", "pmFromFile", "rx"], ["lowercase"], True),
        "apache": ("pcre", ["pm", "pmFromFile", "rx"], ["lowercase"], True),
        "traefik": ("re2", ["rx"], [], True),
-       "haproxy": ("pcre", ["rx"], ["lowercase"], True),
+       "haproxy": ("pcre", ["pm", "pmFromFile", "rx"], ["lowercase"], True),
        "envoy": ("re2", ["rx"], ["lowercase"], True)})
 check("every location a backend wrote a regular expression on is one it declares",
       {n: sorted({d.location for d in compiled[n].decisions if d.emitted and d.pattern}

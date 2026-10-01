@@ -144,6 +144,7 @@ python json2haproxy.py
 
 - `waf.cfg` &mdash; the `acl` lines that load the pattern files, and one `deny`, to paste into a `frontend`
 - `waf-<where>[-<converters>].acl` &mdash; pattern files: one regex per line, loaded with `-m reg -f`
+- `<list>.data` &mdash; phrase lists: one phrase per line, loaded with `-m sub -i -f`
 - `README.md` &mdash; in-tree integration notes
 
 | Env var | Default |

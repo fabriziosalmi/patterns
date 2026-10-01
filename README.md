@@ -116,15 +116,15 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 | Nginx | 11 | 159 | 0 | 579 |
 | Apache (ModSecurity) | 8 | 172 | 0 | 569 |
 | Traefik | 0 | 3 | 0 | 746 |
-| HAProxy | 6 | 160 | 0 | 583 |
+| HAProxy | 7 | 173 | 0 | 569 |
 | Envoy | 6 | 164 | 0 | 579 |
 
 **Why a record is dropped**, by the first reason the backend found:
 
 | Reason | Nginx | Apache (ModSecurity) | Traefik | HAProxy | Envoy |
 |---|---:|---:|---:|---:|---:|
-| an operator the backend cannot express | 292 | 292 | 2 | 319 | 319 |
-| matched on a request component the target does not have | 78 | 78 | 561 | 65 | 65 |
+| an operator the backend cannot express | 292 | 292 | 2 | 292 | 319 |
+| matched on a request component the target does not have | 78 | 78 | 561 | 78 | 65 |
 | part of a chain, and the target cannot require all of it | 128 | 128 | 128 | 128 | 128 |
 | not a rule: it changes another rule | 54 | 54 | 54 | 54 | 54 |
 | it refuses ordinary traffic once converted | 10 | 16 |  | 8 | 4 |
@@ -136,8 +136,8 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 
 | Loss | Nginx | Apache (ModSecurity) | Traefik | HAProxy | Envoy |
 |---|---:|---:|---:|---:|---:|
-| matched on other variables than the rule names | 153 | 167 | 3 | 160 | 164 |
-| transformations the rule was written to run after are not applied | 122 | 122 | 2 | 111 | 115 |
+| matched on other variables than the rule names | 153 | 167 | 3 | 173 | 164 |
+| transformations the rule was written to run after are not applied | 122 | 122 | 2 | 121 | 115 |
 <!-- coverage:end -->
 
 The nginx figures above are measured on the rules in its row here. The table is
@@ -161,8 +161,9 @@ expressions HAProxy's parser takes for unmatched quotes, a fetch it does not hav
 hundreds of names, documented as a pattern file that it was not. It is now what was
 documented: pattern files, which HAProxy reads a regular expression to a line, and a
 `waf.cfg` to paste into a `frontend`. The test runs it in a real HAProxy: of the 21
-attacks, 12 are refused in clear and 10 percent-encoded (`url_dec`), and 0 of the 162
-ordinary requests.
+attacks, 17 are refused in clear and 14 percent-encoded (`url_dec`), and 0 of the 162
+ordinary requests. Its phrase lists (`@pmFromFile`: `/.env`, `/.git/config`, scanners) are the
+`*.data` files, loaded with `-m sub -i -f`.
 
 Apache was not loading until [#55](https://github.com/fabriziosalmi/patterns/issues/55):
 it wrote the operators CRS names as if they were patterns, after `re.escape` had turned
@@ -325,9 +326,10 @@ http:
 ```haproxy
 frontend http-in
     bind *:80
-    # the lines of waf.cfg: an acl for each pattern file, and one deny
+    # the lines of waf.cfg: an acl for each pattern file and phrase list, and one deny
     acl waf_query_string_urldecode query,url_dec(1) -m reg -f /etc/haproxy/waf/waf-query-string-urldecode.acl
-    http-request deny deny_status 403 if waf_query_string_urldecode
+    acl waf_user_agent_scanners_user_agents hdr(user-agent) -m sub -i -f /etc/haproxy/waf/scanners-user-agents.data
+    http-request deny deny_status 403 if waf_query_string_urldecode or waf_user_agent_scanners_user_agents
     # the bad-bot list, a pattern file
     acl bad_bot hdr(user-agent) -m reg -i -f /etc/haproxy/waf/bots.acl
     http-request deny deny_status 403 if bad_bot

@@ -19,9 +19,9 @@ The fastest path. A scheduled GitHub Actions workflow builds every archive each 
 | Archive | Contains | Target |
 |---------|----------|--------|
 | `nginx_waf.zip` | `waf_maps.conf`, `waf_rules.conf`, `bots.conf` | Nginx |
-| `apache_waf.zip` | Per-category ModSecurity `.conf` files, `bots.conf` | Apache + mod_security2 |
+| `apache_waf.zip` | Per-category ModSecurity `.conf` files, `bots.conf`, the phrase lists `*.data` (keep them next to the `.conf`) | Apache + mod_security2 |
 | `traefik_waf.zip` | `middleware.toml`, `bots.toml` | Traefik (file provider) |
-| `haproxy_waf.zip` | `waf.cfg`, pattern files `waf-*.acl`, `bots.acl` | HAProxy |
+| `haproxy_waf.zip` | `waf.cfg`, pattern files `waf-*.acl`, phrase lists `*.data`, `bots.acl` | HAProxy |
 | `envoy_waf.zip` | `waf-rbac.yaml`, `runtime.yaml`, `bots-rbac.yaml` | Envoy (RBAC filter) |
 
 Pick one, extract, then jump to the matching integration guide.
@@ -61,9 +61,9 @@ After running the converters, generated files live under `waf_patterns/`:
 ```text
 waf_patterns/
 ├── nginx/      # waf_maps.conf, waf_rules.conf, bots.conf
-├── apache/     # sqli.conf, xss.conf, rce.conf, lfi.conf, … bots.conf
+├── apache/     # sqli.conf, xss.conf, rce.conf, lfi.conf, … bots.conf, *.data
 ├── traefik/    # middleware.toml, bots.toml
-├── haproxy/    # waf.cfg, waf-*.acl, bots.acl
+├── haproxy/    # waf.cfg, waf-*.acl, *.data, bots.acl
 └── envoy/      # waf-rbac.yaml, runtime.yaml, bots-rbac.yaml
 ```
 
