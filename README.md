@@ -117,14 +117,14 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 | Apache (ModSecurity) | 8 | 172 | 0 | 569 |
 | Traefik | 0 | 3 | 0 | 746 |
 | HAProxy | 7 | 173 | 0 | 569 |
-| Envoy | 6 | 164 | 0 | 579 |
+| Envoy | 7 | 177 | 0 | 565 |
 
 **Why a record is dropped**, by the first reason the backend found:
 
 | Reason | Nginx | Apache (ModSecurity) | Traefik | HAProxy | Envoy |
 |---|---:|---:|---:|---:|---:|
-| an operator the backend cannot express | 292 | 292 | 2 | 292 | 319 |
-| matched on a request component the target does not have | 78 | 78 | 561 | 78 | 65 |
+| an operator the backend cannot express | 292 | 292 | 2 | 292 | 292 |
+| matched on a request component the target does not have | 78 | 78 | 561 | 78 | 78 |
 | part of a chain, and the target cannot require all of it | 128 | 128 | 128 | 128 | 128 |
 | not a rule: it changes another rule | 54 | 54 | 54 | 54 | 54 |
 | it refuses ordinary traffic once converted | 10 | 16 |  | 8 | 4 |
@@ -136,8 +136,8 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 
 | Loss | Nginx | Apache (ModSecurity) | Traefik | HAProxy | Envoy |
 |---|---:|---:|---:|---:|---:|
-| matched on other variables than the rule names | 153 | 167 | 3 | 173 | 164 |
-| transformations the rule was written to run after are not applied | 122 | 122 | 2 | 121 | 115 |
+| matched on other variables than the rule names | 153 | 167 | 3 | 173 | 177 |
+| transformations the rule was written to run after are not applied | 122 | 122 | 2 | 121 | 125 |
 <!-- coverage:end -->
 
 The nginx figures above are measured on the rules in its row here. The table is

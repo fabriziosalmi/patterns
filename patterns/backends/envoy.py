@@ -21,8 +21,15 @@ expression, in RE2. That is what is written here, with what that is:
   * `action: DENY` has nothing that only records, so only a rule of severity `high` is
     written, as for Traefik and HAProxy.
 
-A rule is written when it is `@rx`, not negated, not part of a chain, an RE2 expression, on
-a location Envoy has and the corpus can check, and no ordinary request matches it.
+  * `@pm` and `@pmFromFile` are written as what they are, and not as a regular expression:
+    one permission for each phrase, `string_match: {contains: <phrase>, ignore_case: true}`,
+    a substring with case ignored, which is what `@pm` does (measured in Envoy 1.32: it loads,
+    needs nothing from the runtime layer, folds ASCII only and takes other bytes as they are).
+    That is a list of hundreds of permissions, each one line, and a request pays for it: with
+    2,828 phrases on two headers (5,656 permissions) a request took about 0.3 ms more.
+
+A rule is written when it is `@rx` (or a phrase list), not negated, not part of a chain, an RE2
+expression, on a location Envoy has and the corpus can check, and no ordinary request matches it.
 
   waf-rbac.yaml   the filter, as an item of `http_filters`, to put before the router
   runtime.yaml    `layered_runtime`, to merge into the bootstrap
@@ -37,10 +44,11 @@ from patterns.backends import Backend, Capabilities, Compiled, Decision, Target,
 from patterns.backends._common import (
     modsecurity_unquote,
     operator_of,
+    phrases_of,
     provenance_header,
     yaml_string,
 )
-from patterns.corpus import first_ordinary_match
+from patterns.corpus import first_ordinary_match, first_ordinary_phrase
 from patterns.ir import IR
 
 logger = logging.getLogger(__name__)
@@ -102,6 +110,23 @@ def matcher(kind: str, header: Optional[str], regex: str, indent: str) -> str:
             f"{indent}        regex: {yaml_string(regex)}\n")
 
 
+def phrase_matcher(kind: str, header: Optional[str], phrases: List[str], indent: str) -> str:
+    """
+    The permissions of a phrase list, a line each: the value contains the phrase, case ignored.
+
+    A line is a flow mapping, so that a list of a thousand phrases is a thousand lines and not
+    six thousand; a phrase is a quoted scalar, which takes any character as it is.
+    """
+    lines = []
+    for phrase in phrases:
+        contains = f"contains: {yaml_string(phrase)}, ignore_case: true"
+        if kind == "url_path":
+            lines.append(f"{indent}- {{url_path: {{path: {{{contains}}}}}}}\n")
+        else:
+            lines.append(f"{indent}- {{header: {{name: {yaml_string(header or '')}, string_match: {{{contains}}}}}}}\n")
+    return "".join(lines)
+
+
 def rbac_filter(name: str, policies: Dict[str, List[Tuple[str, str]]]) -> str:
     """
     An RBAC HTTP filter that refuses what any policy matches, as an item of `http_filters`.
@@ -133,7 +158,8 @@ def runtime_layer() -> str:
             f"          warn_level: {MAX_PROGRAM_SIZE}\n")
 
 
-def _write(index: int, rule: Dict) -> Tuple[Decision, Optional[Tuple[str, str, str]]]:
+def _write(index: int, rule: Dict, data_files: Dict[str, List[str]]
+           ) -> Tuple[Decision, Optional[Tuple[str, str, str]]]:
     """
     Decides what to do with one record.
 
@@ -151,18 +177,25 @@ def _write(index: int, rule: Dict) -> Tuple[Decision, Optional[Tuple[str, str, s
         return Decision(index, False, "chain-unsupported", f"{chain['role']} of {chain['head']}"), None
 
     operator = operator_of(rule)
-    if operator["negated"] or operator["name"] != "rx":
+    phrases = phrases_of(operator, data_files)
+    expression = None
+    if phrases is not None:
+        if not phrases:
+            return Decision(index, False, "empty-pattern", "the phrase list has no phrases"), None
+    elif operator["negated"] or operator["name"] != "rx":
         name = ("!" if operator["negated"] else "") + "@" + operator["name"]
-        return Decision(index, False, "operator-unsupported", name), None
-
-    expression = modsecurity_unquote(operator["argument"])
-    if not expression:
-        return Decision(index, False, "empty-pattern", "nothing is left of the pattern"), None
-    if "\n" in expression or "\r" in expression:
-        return Decision(index, False, "invalid-regex", "a line break in an expression"), None
-    problem = dialects.check(Envoy.capabilities.dialect, expression)
-    if problem:
-        return Decision(index, False, "invalid-regex", problem), None
+        detail = (f"{name} (the IR has no such phrase list)"
+                  if operator["name"] == "pmFromFile" and not operator["negated"] else name)
+        return Decision(index, False, "operator-unsupported", detail), None
+    else:
+        expression = modsecurity_unquote(operator["argument"])
+        if not expression:
+            return Decision(index, False, "empty-pattern", "nothing is left of the pattern"), None
+        if "\n" in expression or "\r" in expression:
+            return Decision(index, False, "invalid-regex", "a line break in an expression"), None
+        problem = dialects.check(Envoy.capabilities.dialect, expression)
+        if problem:
+            return Decision(index, False, "invalid-regex", problem), None
 
     location = rule.get("location", "request-uri").lower()
     if location not in LOCATIONS:
@@ -176,24 +209,35 @@ def _write(index: int, rule: Dict) -> Tuple[Decision, Optional[Tuple[str, str, s
         return Decision(index, False, "severity-below-blocking", severity), None
 
     kind, header, field = LOCATIONS[location]
+    category = rule.get("category", "generic").lower()
+    if phrases is not None:
+        ordinary = first_ordinary_phrase(phrases, field)
+        if ordinary is not None:
+            return Decision(index, False, "matches-benign-traffic", ordinary), None
+        what = operator["argument"].strip() if operator["name"] == "pmFromFile" else "@pm"
+        comment = f"CRS {rule.get('id', 'no_id')} ({category}): {what}, {len(phrases)} phrase{'' if len(phrases) == 1 else 's'}"
+        return (Decision(index, True, location=location),
+                (POLICY[kind](header or ""), comment, phrase_matcher(kind, header, phrases, "              ")))
+
     ignore_case = "lowercase" in (rule.get("transformations") or [])
     ordinary = first_ordinary_match(expression, field, ignore_case)
     if ordinary is not None:
         return Decision(index, False, "matches-benign-traffic", ordinary), None
 
-    category = rule.get("category", "generic").lower()
     comment = f"CRS {rule.get('id', 'no_id')} ({category})"
     lines = matcher(kind, header, whole(expression, ignore_case), "              ")
     return (Decision(index, True, location=location, pattern=expression),
             (POLICY[kind](header or ""), comment, lines))
 
 
-def generate_envoy_waf(rules: List[Dict], crs_ref: str = "latest") -> Compiled:
+def generate_envoy_waf(rules: List[Dict], crs_ref: str = "latest",
+                       data_files: Optional[Dict[str, List[str]]] = None) -> Compiled:
     """Builds the RBAC filter and the runtime setting."""
+    data_files = data_files or {}
     decisions: List[Decision] = []
     policies: Dict[str, List[Tuple[str, str]]] = defaultdict(list)
     for index, rule in enumerate(rules):
-        decision, written = _write(index, rule)
+        decision, written = _write(index, rule, data_files)
         decisions.append(decision)
         if written is not None:
             policy, comment, lines = written
@@ -223,7 +267,7 @@ class Envoy(Backend):
     # `lowercase` is written as a case-insensitive group, as nginx writes `~*`.
     capabilities = Capabilities(
         dialect="re2",
-        operators=frozenset({"rx"}),
+        operators=frozenset({"rx", "pm", "pmFromFile"}),
         transformations=frozenset({"lowercase"}),
         case_insensitive=True,
         locations={
@@ -244,4 +288,4 @@ class Envoy(Backend):
     )
 
     def compile(self, ir: IR) -> Compiled:
-        return generate_envoy_waf(ir.rules, ir.crs_ref)
+        return generate_envoy_waf(ir.rules, ir.crs_ref, ir.data_files)

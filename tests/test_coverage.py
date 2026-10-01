@@ -547,13 +547,25 @@ from patterns.backends._common import yaml_string  # noqa: E402
 
 envoy_files = compiled["envoy"].files
 rbac = yaml.safe_load(envoy_files["waf-rbac.yaml"])
-envoy_regexes = [m.get("header", m.get("url_path"))
-                 for p in rbac[0]["typed_config"]["rules"]["policies"].values()
-                 for m in p["permissions"][0]["or_rules"]["rules"]]
+envoy_permissions = [m.get("header", m.get("url_path"))
+                     for p in rbac[0]["typed_config"]["rules"]["policies"].values()
+                     for m in p["permissions"][0]["or_rules"]["rules"]]
+envoy_regexes = [m for m in envoy_permissions if "safe_regex" in (m.get("string_match") or m.get("path") or {})]
+envoy_phrase_permissions = [m for m in envoy_permissions if m not in envoy_regexes]
 check("the filter is YAML, one item of http_filters, a deny, of the type Envoy has",
       (len(rbac), rbac[0]["name"], rbac[0]["typed_config"]["rules"]["action"], rbac[0]["typed_config"]["@type"]),
       (1, "waf", "DENY", "type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC"))
-check("it holds what the matrix says was written", len(envoy_regexes), written("envoy"))
+check("it holds what the matrix says was written: an expression is a permission, a phrase list is a comment and a "
+      "permission for each phrase",
+      len(envoy_regexes) + len(re.findall(r"^\s+# CRS \S+ \(\S+\): .*, \d+ phrases?$", envoy_files["waf-rbac.yaml"], re.M)),
+      written("envoy"))
+envoy_expected_phrases = sorted(
+    p for d in compiled["envoy"].decisions if d.emitted and not d.pattern
+    for p in backends._common.phrases_of(backends._common.operator_of(R.rules[d.index]), R.data_files))
+check("every phrase of every list that is written is one `contains` that ignores case, and nothing else is",
+      (sorted((m.get("string_match") or m["path"])["contains"] for m in envoy_phrase_permissions),
+       {(m.get("string_match") or m["path"])["ignore_case"] for m in envoy_phrase_permissions}),
+      (envoy_expected_phrases, {True}))
 envoy_whole = [(m.get("string_match") or m["path"])["safe_regex"]["regex"] for m in envoy_regexes]
 check("every expression is between two `.*` that are dot-all and nothing else is: Envoy matches the whole value",
       [r for r in envoy_whole if not (r.startswith("(?s:.*)") and r.endswith("(?s:.*)"))], [])
@@ -625,6 +637,64 @@ check("and one that can be single-quoted is, so a backslash is a backslash", yam
 check("an empty filter is still a filter that refuses nothing",
       yaml.safe_load(backends.get("envoy").compile(ir.IR(rules=[])).files["waf-rbac.yaml"])[0]
       ["typed_config"]["rules"]["policies"], {})
+
+print("what the Envoy backend writes for a list of phrases")
+
+
+def envoy_phrases(argument, name="pmFromFile", data=None, negated=False, **extra):
+    """What the Envoy backend does with one phrase rule made for the purpose, and the permissions it writes."""
+    record = rule(operator={"name": name, "negated": negated, "argument": argument}, **extra)
+    one = backends.get("envoy").compile(ir.IR(rules=[record], data_files=data or {}))
+    d = one.decisions[0]
+    text = one.files["waf-rbac.yaml"]
+    policies = yaml.safe_load(text)[0]["typed_config"]["rules"]["policies"]
+    perms = [m for pol in policies.values() for m in pol["permissions"][0]["or_rules"]["rules"]]
+    return (d.emitted, d.reason, d.detail), perms, text
+
+
+def contains(name, phrase):
+    return {"header": {"name": name, "string_match": {"contains": phrase, "ignore_case": True}}}
+
+
+inline, perms, _ = envoy_phrases("zqxjk-one zq.two", "pm")
+check("envoy: @pm is written as a permission for each phrase: the value contains it, case ignored",
+      (inline[0], perms), (True, [contains(":path", "zqxjk-one"), contains(":path", "zq.two")]))
+listed, perms, text = envoy_phrases("words.data", data=WORDS)
+check("@pmFromFile is written the same way, from the list the IR carries, in the order CRS has them",
+      (listed[0], perms), (True, [contains(":path", p) for p in WORDS["words.data"]]))
+check("and the comment says which CRS rule and which list, and how many phrases",
+      "# CRS 1 (test): words.data, 3 phrases\n" in text, True)
+check("one phrase is `1 phrase`", "# CRS 1 (test): @pm, 1 phrase\n" in envoy_phrases("zqxjk", "pm")[2], True)
+check("the path alone is matched with `url_path`, and a header by its name",
+      (envoy_phrases("words.data", data=WORDS, location="Request-Filename")[1][0],
+       envoy_phrases("words.data", data=WORDS, location="User-Agent")[1][0]),
+      ({"url_path": {"path": {"contains": "zqxjk-one", "ignore_case": True}}}, contains("user-agent", "zqxjk-one")))
+check("a phrase list the IR does not have is not guessed at",
+      envoy_phrases("gone.data", data=WORDS)[0], (False, "operator-unsupported", "@pmFromFile (the IR has no such phrase list)"))
+check("an empty one is not written", envoy_phrases("e.data", data={"e.data": []})[0][:2], (False, "empty-pattern"))
+check("a negated one is not: it is not what a rule that refuses can say",
+      envoy_phrases("zqxjk", "pm", negated=True)[0][:2], (False, "operator-unsupported"))
+check("one an ordinary request holds is not written, whatever the case: `Googlebot` in a User-Agent",
+      envoy_phrases("GOOGLEBOT zqxjk", "pm", location="User-Agent")[0][:2], (False, "matches-benign-traffic"))
+check("and a phrase that is last in a long list keeps the whole rule out: it is written whole or not at all",
+      envoy_phrases("big.data", data={"big.data": late}, location="User-Agent")[0][:2], (False, "matches-benign-traffic"))
+check("Envoy decodes nothing, so a phrase is looked for in the request as it was sent: `grüße` is not in "
+      "`gr%C3%BC%C3%9Fe`, and `%c3%bc` is",
+      (envoy_phrases("w.data", data={"w.data": ["grüße"]}, location="Query-String")[0][:2],
+       envoy_phrases("w.data", data={"w.data": ["%c3%bc"]}, location="Query-String")[0][:2]),
+      ((True, None), (False, "matches-benign-traffic")))
+check("a phrase is one `contains` however awkward: a quote, a backslash, a colon, a control character, a space at "
+      "either end are read back as written (in a User-Agent, where no ordinary request holds one)",
+      [m["header"]["string_match"]["contains"]
+       for m in envoy_phrases("w.data", data={"w.data": [v for v in awkward if v]}, location="User-Agent")[1]],
+      [v for v in awkward if v])
+check("only the phrase lists of rules that are written are in the filter",
+      sorted(m["header"]["string_match"]["contains"] for m in
+             yaml.safe_load(backends.get("envoy").compile(ir.IR(rules=[
+                 rule("1", operator={"name": "pmFromFile", "negated": False, "argument": "words.data"}),
+                 rule("2", action="pass", operator={"name": "pmFromFile", "negated": False, "argument": "other.data"})],
+                 data_files={"words.data": ["zqxjk"], "other.data": ["zqxjl"]})).files["waf-rbac.yaml"])[0]
+             ["typed_config"]["rules"]["policies"]["waf_path"]["permissions"][0]["or_rules"]["rules"]), ["zqxjk"])
 
 print("what the HAProxy backend writes")
 haproxy_records = [(d, R.rules[d.index]) for d in compiled["haproxy"].decisions if d.emitted]
@@ -798,7 +868,7 @@ check("what each backend declares it can express is what is shown above and noth
        "apache": ("pcre", ["pm", "pmFromFile", "rx"], ["lowercase"], True),
        "traefik": ("re2", ["rx"], [], True),
        "haproxy": ("pcre", ["pm", "pmFromFile", "rx"], ["lowercase"], True),
-       "envoy": ("re2", ["rx"], ["lowercase"], True)})
+       "envoy": ("re2", ["pm", "pmFromFile", "rx"], ["lowercase"], True)})
 check("every location a backend wrote a regular expression on is one it declares",
       {n: sorted({d.location for d in compiled[n].decisions if d.emitted and d.pattern}
                  - set(backends.get(n).capabilities.locations)) for n in compiled},

@@ -1,20 +1,21 @@
 # Envoy Integration
 
-Envoy has no WAF in it, and no rule language. What it has that can refuse a request on what it says is the **RBAC HTTP filter**: a list of policies, each a set of permissions (a header, the path) that match a request, and with `action: DENY` a request that matches one gets a `403` from Envoy itself. A header or a path can be matched against a regular expression, in RE2. That is what the generated files are. Every example below was run against Envoy 1.32 (`envoyproxy/envoy:v1.32.13`).
+Envoy has no WAF in it, and no rule language. What it has that can refuse a request on what it says is the **RBAC HTTP filter**: a list of policies, each a set of permissions (a header, the path) that match a request, and with `action: DENY` a request that matches one gets a `403` from Envoy itself. A header or a path can be matched against a regular expression, in RE2, or against a string. That is what the generated files are. Every example below was run against Envoy 1.32 (`envoyproxy/envoy:v1.32.13`).
 
 ## What it can and cannot do
 
-Each rule is written as the regular expression CRS wrote, matched on what its location is:
+Each rule is written as CRS wrote it, a regular expression or a list of phrases, matched on what its location is:
 
-- **Only `@rx` is written**, not negated, not part of a chain, and only a rule of severity `high`: a `DENY` cannot only record. `@pm`, `@pmFromFile`, `@detectSQLi`, `@detectXSS`, the numeric comparisons and the byte-range checks are dropped. The phrase lists could be written, as nginx does, and are not yet: a request for `/.env` passes.
+- **Only `@rx`, `@pm` and `@pmFromFile` are written**, not negated, not part of a chain, and only a rule of severity `high`: a `DENY` cannot only record. `@detectSQLi`, `@detectXSS`, the numeric comparisons and the byte-range checks are dropped.
+- **A phrase list is a permission for each phrase**, not a regular expression: `string_match: {contains: <phrase>, ignore_case: true}`, which is what `@pm` does (a substring, case ignored; ASCII is folded and other bytes are matched as they are). This is how `/.env`, `/.git/config` and a scanner's User-Agent are refused. It needs nothing from `runtime.yaml`. The price is size and time: `waf-rbac.yaml` has about 4,900 of them, and a request took about 0.3 ms more with 5,656 permissions on two headers (Envoy 1.32, measured).
 - **RE2, so no lookahead, lookbehind or backreference.** A rule that uses one is not written.
 - **Nothing is decoded.** `:path` is the path and the query string as they arrived, and `url_path` is the path alone: neither is percent-decoded, so an attack written `%3Cscript%3E` passes where the same attack in clear is refused. [What this catches](https://github.com/fabriziosalmi/patterns#what-this-catches) says how much, for nginx, which is in the same position.
 - **`(?i)` is kept** and a rule CRS gives `t:lowercase` is matched with case ignored. The other transformations are not applied, and the [coverage matrix](/coverage) says which, rule by rule.
 - **The query string is matched together with the path**, on `:path`: a pattern written for one value sees the path and the other values too. The request body is not matched.
 - **No anomaly score.** Every rule decides alone.
-- **A rule that refuses ordinary traffic is not written.** Each is checked against [a corpus of ordinary requests](https://github.com/fabriziosalmi/patterns/blob/main/patterns/corpus.py) and left out if one matches. [`tests/test_envoy_blocking.py`](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_envoy_blocking.py) runs the files in a real Envoy on every change: 162 ordinary requests, none refused; of 21 attacks, 12 refused in clear and 3 percent-encoded.
+- **A rule that refuses ordinary traffic is not written.** Each is checked against [a corpus of ordinary requests](https://github.com/fabriziosalmi/patterns/blob/main/patterns/corpus.py) and left out if one matches. [`tests/test_envoy_blocking.py`](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_envoy_blocking.py) runs the files in a real Envoy on every change: 162 ordinary requests, none refused; of 21 attacks, 17 refused in clear and 6 percent-encoded.
 
-At CRS v4.29.0 that is 170 rules written (6 in full, 164 with a named loss). It is a useful first filter in front of an application, not the Core Rule Set.
+At CRS v4.29.0 that is 184 rules written (7 in full, 177 with a named loss). It is a useful first filter in front of an application, not the Core Rule Set.
 
 ## Quick start
 
@@ -27,7 +28,7 @@ At CRS v4.29.0 that is 170 rules written (6 in full, 164 with a named loss). It 
 
 | File | Purpose |
 |------|---------|
-| `waf-rbac.yaml` | The RBAC filter, as an item of `http_filters`: a policy for each of `:path` (the path and the query string), `url_path` (the path alone), the User-Agent, the host (`:authority`), the referer and the content type, each a list of expressions after a comment that names the CRS rule |
+| `waf-rbac.yaml` | The RBAC filter, as an item of `http_filters`: a policy for each of `:path` (the path and the query string), `url_path` (the path alone), the User-Agent, the host (`:authority`), the referer and the content type, each a list of expressions and phrases after a comment that names the CRS rule (and the phrase list) |
 | `runtime.yaml` | `layered_runtime`, to merge into the bootstrap. **Envoy does not start without it** |
 | `bots-rbac.yaml` | A second filter, `waf_bots`, with the bad-bot list ([Bad Bot Detection](/badbots)) |
 
@@ -155,6 +156,14 @@ Envoy matches a regular expression against the **whole value**, not against a pa
 regex: '(?s:.*)(?:union)(?s:.*)'
 ```
 
+A phrase is not an expression, so it is not put between `.*`: `contains` looks for it anywhere in the value, and `ignore_case` folds ASCII:
+
+```yaml
+- header:
+    name: ':path'
+    string_match: {contains: '/.env', ignore_case: true}
+```
+
 A deny is answered by Envoy itself, with a `403` and the body `RBAC: access denied`. The filter is evaluated for every request, and a request that matches any permission of any policy is refused, so the order of the expressions does not matter.
 
 ## Testing
@@ -167,7 +176,9 @@ curl -I -A "$UA" "http://localhost:8080/?q=hello"                               
 curl -I -A "$UA" "http://localhost:8080/?id=1'+OR+'1'='1"                          # 403
 curl -I -A "$UA" "http://localhost:8080/?q=<script>alert(1)</script>"              # 403
 curl -I -A "$UA" "http://localhost:8080/?q=%3Cscript%3Ealert(1)%3C/script%3E"      # 200: not decoded
-curl -I -A "sqlmap/1.8" "http://localhost:8080/"                                   # 403, with bots-rbac.yaml
+curl -I -A "$UA" "http://localhost:8080/.env"                                      # 403: restricted-files.data
+curl -I -A "$UA" "http://localhost:8080/%2eenv"                                    # 200: not decoded, so a phrase in clear does not see it
+curl -I -A "sqlmap/1.8" "http://localhost:8080/"                                   # 403: scanners-user-agents.data, and bots-rbac.yaml
 ```
 
 ## Troubleshooting

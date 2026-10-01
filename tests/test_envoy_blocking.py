@@ -49,7 +49,13 @@ PORT = 18904
 # What the generated files do today. A rule that matches an ordinary request is not written, so
 # none is refused. The floors are below what the rules refuse now: Envoy decodes nothing, so the
 # attacks percent-encoded are the ones that pass (see tests/test_nginx_blocking.py).
-EXPECTED: Dict = {"loads": True, "benign": [], "floor_clear": 10, "floor_encoded": 2}
+EXPECTED: Dict = {"loads": True, "benign": [], "floor_clear": 15, "floor_encoded": 5,
+                  # What only a phrase list catches (#52, #92): CRS refuses `/.env` and `/.git/config` with
+                  # `@pmFromFile restricted-files.data` on the path, and a scanner's User-Agent with
+                  # `@pmFromFile scanners-user-agents.data`, which Envoy gets as one `contains` permission for each
+                  # phrase. A named list is a stronger guard than a floor: the floor would pass if some other rule
+                  # took their place. Nothing is decoded, but these three have nothing in them to encode.
+                  "must_catch": ["sensitive file", "git directory", "scanner user agent"]}
 
 # For the known-good files: they load, refuse nothing ordinary, and refuse the scanner and the
 # script tag in clear, and only the scanner when the tag is percent-encoded.
@@ -139,6 +145,11 @@ def exercise(directory: Path, expected: Dict, check: c.Checker) -> None:
             traffic = c.measure(PORT)
         c.report_traffic(check, traffic, expected["benign"], expected["floor_clear"],
                          expected["floor_encoded"])
+        if expected.get("must_catch"):
+            print("\nwhat only a phrase list catches")
+            for label, caught in (("in clear", traffic.caught_clear), ("percent-encoded", traffic.caught_encoded)):
+                check.expect(f"{label}: {', '.join(expected['must_catch'])}",
+                             [n for n in expected["must_catch"] if n not in caught], [])
 
     print("\nthe bad-bot list (bots-rbac.yaml)")
     if not (directory / "bots-rbac.yaml").is_file():
