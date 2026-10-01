@@ -272,6 +272,29 @@ check("a negated operator is not written as the expression it negates",
       backends.get("traefik").compile(ir.IR(rules=[rule(
           operator={"name": "rx", "negated": True, "argument": "zqxjk"}, pattern="!@rx zqxjk", **UA)])
       ).decisions[0].reason, "operator-unsupported")
+print("a chain is not written, in any target")
+for name in backends.names():
+    check(f"{name}: no record of a chain is written",
+          [R.rules[d.index]["id"] for d in compiled[name].decisions
+           if d.emitted and R.rules[d.index]["chain"]], [])
+    check(f"{name}: and every one is dropped for it, so the matrix says why",
+          sorted({d.reason for d in compiled[name].decisions if R.rules[d.index]["chain"]}), ["chain-unsupported"])
+HEAD = {"role": "head", "head": "7", "position": 0}
+LINK = {"role": "link", "head": "7", "position": 1}
+for name, location in (("nginx", "Content-Type"), ("apache", "CONTENT-TYPE"), ("haproxy", "CONTENT-TYPE"),
+                       ("traefik", "User-Agent")):
+    for role, chain in (("the head", HEAD), ("a link", LINK)):
+        one = backends.get(name).compile(ir.IR(rules=[rule(
+            "7" if chain is HEAD else "no_id", chain=chain, location=location,
+            operator={"name": "rx", "negated": False, "argument": "zqxjk"}, pattern="@rx zqxjk",
+            **({} if chain is HEAD else {"action": None, "severity": "medium"}))])).decisions[0]
+        check(f"{name}: {role} of a chain is not written, whatever it matches",
+              (one.emitted, one.reason, one.detail), (False, "chain-unsupported", f"{chain['role']} of 7"))
+    alone = backends.get(name).compile(ir.IR(rules=[rule(
+        location=location, operator={"name": "rx", "negated": False, "argument": "zqxjk"},
+        pattern="@rx zqxjk")])).decisions[0]
+    check(f"{name}: and the same rule outside a chain is", alone.emitted, True)
+
 print("what the nginx backend writes for a list of phrases")
 from patterns.backends import nginx as nginx_backend  # noqa: E402
 from patterns.corpus import nginx_uri  # noqa: E402

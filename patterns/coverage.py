@@ -42,6 +42,7 @@ STATUSES = ("full", "approximate", "unsound", "dropped")
 REASONS = {
     "not-a-rule": "not a rule: it changes another rule",
     "operator-unsupported": "an operator the backend cannot express",
+    "chain-unsupported": "part of a chain, and the target cannot require all of it",
     "location-unsupported": "matched on a request component the target does not have",
     "invalid-regex": "the expression does not compile",
     "empty-pattern": "nothing is left of the pattern",

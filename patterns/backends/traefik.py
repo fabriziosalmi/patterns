@@ -80,6 +80,12 @@ def generate_traefik_conf(rules: List[Dict], crs_ref: str = "latest") -> Compile
         category = rule.get("category", "generic").lower()
         location = rule.get("location", "user-agent").lower()
 
+        # A chain matches when every record does, and one on its own is another rule.
+        if rule.get("chain"):
+            decisions.append(Decision(index, False, "chain-unsupported",
+                                      f"{rule['chain']['role']} of {rule['chain']['head']}"))
+            continue
+
         # The plugin sees the User-Agent header and nothing else.
         if location != "user-agent":
             decisions.append(Decision(index, False, "location-unsupported", location))

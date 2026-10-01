@@ -54,7 +54,7 @@ BOT_LINES = [f"acl bad_bot hdr(user-agent) -m reg -i -f {WAF_DIR}/bots.acl",
 # What the generated files do today. A rule that matches an ordinary request is not
 # written, so none is refused; the floors are below what the rules refuse now, and are
 # there to catch a collapse (see tests/test_nginx_blocking.py).
-EXPECTED: Dict = {"loads": True, "benign": [], "floor_clear": 12, "floor_encoded": 8}
+EXPECTED: Dict = {"loads": True, "benign": [], "floor_clear": 10, "floor_encoded": 8}
 
 # For the known-good files: they load, refuse nothing ordinary, and refuse the scanner and
 # the script tag, in clear and (the query string is decoded) percent-encoded.

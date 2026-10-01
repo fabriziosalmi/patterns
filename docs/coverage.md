@@ -9,30 +9,30 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 
 | Target | Full | Approximate | Unsound | Dropped |
 |---|---:|---:|---:|---:|
-| Nginx | 13 | 173 | 0 | 563 |
-| Apache (ModSecurity) | 9 | 170 | 0 | 570 |
+| Nginx | 13 | 159 | 0 | 577 |
+| Apache (ModSecurity) | 9 | 160 | 0 | 580 |
 | Traefik | 0 | 3 | 0 | 746 |
-| HAProxy | 6 | 171 | 0 | 572 |
+| HAProxy | 6 | 160 | 0 | 583 |
 
 **Why a record is dropped**, by the first reason the backend found:
 
 | Reason | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
 |---|---:|---:|---:|---:|
-| an operator the backend cannot express | 368 | 398 | 2 | 398 |
-| matched on a request component the target does not have | 106 | 93 | 685 | 93 |
+| an operator the backend cannot express | 292 | 319 | 2 | 319 |
+| matched on a request component the target does not have | 78 | 65 | 561 | 65 |
+| part of a chain, and the target cannot require all of it | 128 | 128 | 128 | 128 |
 | not a rule: it changes another rule | 54 | 54 | 54 | 54 |
-| it refuses ordinary traffic once converted | 15 | 21 |  | 15 |
+| it refuses ordinary traffic once converted | 8 | 13 |  | 8 |
 | longer than the target accepts | 16 |  |  |  |
-| its severity is below what refuses, and the target cannot only record |  |  | 5 | 8 |
-| it records and does not refuse | 4 | 4 |  | 4 |
+| its severity is below what refuses, and the target cannot only record |  |  | 1 | 8 |
+| it records and does not refuse | 1 | 1 |  | 1 |
 
 **What a written rule loses**, in how many of them:
 
 | Loss | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
 |---|---:|---:|---:|---:|
-| matched on other variables than the rule names | 161 | 164 | 3 | 168 |
-| transformations the rule was written to run after are not applied | 128 | 116 | 2 | 115 |
-| a chain written without all of its links | 14 | 10 |  | 11 |
+| matched on other variables than the rule names | 153 | 157 | 3 | 160 |
+| transformations the rule was written to run after are not applied | 122 | 112 | 2 | 111 |
 <!-- coverage:end -->
 
 The numbers are counted on the records of the [intermediate representation](/ir), which include the links of a chain and the `SecRuleUpdateTargetById` directives, so they are a little more than the number of CRS rules. [`coverage.json`](https://github.com/fabriziosalmi/patterns/blob/main/waf_patterns/coverage.json) holds the verdict for each record, and is published with every release.
@@ -45,6 +45,8 @@ The numbers are counted on the records of the [intermediate representation](/ir)
 | **Approximate** | Written, with a loss that is named: a transformation that is not applied, a variable that is not matched, a chain reduced to its first link. |
 | **Unsound** | Written, and it cannot mean what the rule said: an operator the backend cannot express written out as if it were a pattern, an expression that was rewritten, one link of a chain without the others. A rule like this is not less than the original, it is something else, and it is worth more attention than a rule that is dropped. |
 | **Dropped** | Not written, with a reason. |
+
+No target writes any record of a chain today: a chain matches when every record does, a record on its own is another rule, and one of them refused every `application/json; charset=utf-8` in all four targets before this was so (the reason is *part of a chain*). The two statuses above that speak of a chain are what the matrix would say of a target that wrote part of one.
 
 **Dropped** is decided by the backend where it drops the rule, and the reason is the first one it found. **Approximate** and **unsound** come from comparing what was written with what the target is declared to express (`Capabilities` in each backend), and [`tests/test_coverage.py`](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_coverage.py) holds those declarations to the files: the number of rules a target writes is counted in its output and has to match.
 

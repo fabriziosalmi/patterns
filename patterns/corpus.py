@@ -233,6 +233,28 @@ BENIGN: List[Dict[str, str]] = [
            content_type="application/json"),
     benign("api", "a form post", "a form content type", "/contact",
            content_type="application/x-www-form-urlencoded"),
+    # What a client sends for a Content-Type is not the bare media type: most put a charset
+    # after it, and a rule that reads `charset=` as a sign of something refused every one of
+    # them (CRS 920480, written without the link that makes it a rule).
+    benign("api", "json with a charset", "a Content-Type with `charset=`: what most clients send",
+           "/api/v1/orders", method="POST", content_type="application/json; charset=utf-8",
+           body='{"item":"book","quantity":2}'),
+    benign("api", "a form with a charset", "a form Content-Type with `charset=UTF-8`",
+           "/login", method="POST", content_type="application/x-www-form-urlencoded; charset=UTF-8",
+           body="user=mario&remember=1"),
+    benign("api", "text with a charset, no space", "`;charset=` with no space, as a browser beacon sends it",
+           "/beacon", method="POST", content_type="text/plain;charset=UTF-8", body="ping"),
+    benign("api", "a multipart upload", "a boundary made of dashes in the Content-Type",
+           "/upload", method="POST",
+           content_type="multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW",
+           body="------WebKitFormBoundary7MA4YWxkTrZu0gW\r\nContent-Disposition: form-data; "
+                "name=\"title\"\r\n\r\nholiday\r\n------WebKitFormBoundary7MA4YWxkTrZu0gW--\r\n"),
+    benign("api", "xml with a charset", "an XML body with a charset in its Content-Type",
+           "/api/v1/orders", method="POST", content_type="application/xml; charset=utf-8",
+           body="<order><item>book</item></order>"),
+    benign("api", "a vendor media type", "a `+json` suffix and a version",
+           "/api/v2/orders", method="POST", content_type="application/vnd.api+json; version=2",
+           body='{"data":{"type":"orders"}}'),
     benign("api", "array parameters", "`[]` in a name, encoded",
            "/api/v1/items", "ids%5B%5D=1&ids%5B%5D=2&ids%5B%5D=3"),
     benign("api", "nested parameters", "brackets in a name, encoded",

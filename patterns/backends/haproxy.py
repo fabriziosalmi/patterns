@@ -115,6 +115,14 @@ def _write(index: int, rule: Dict) -> Tuple[Decision, Optional[Tuple[str, str]]]
     if directive != "SecRule":
         return Decision(index, False, "not-a-rule", f"{directive} {rule.get('target_rule_id')}"), None
 
+    chain = rule.get("chain")
+    if chain:
+        # A chain matches when every record does, and a record on its own is a different
+        # rule: the head of 920480 is any `charset=` in a Content-Type, and the link that makes
+        # it a rule (the charset is not one that is allowed) is a transaction variable no target
+        # has. Written alone it refused `application/json; charset=utf-8`, in all four targets.
+        return Decision(index, False, "chain-unsupported", f"{chain['role']} of {chain['head']}"), None
+
     operator = operator_of(rule)
     if operator["negated"] or operator["name"] != "rx":
         name = ("!" if operator["negated"] else "") + "@" + operator["name"]

@@ -46,14 +46,14 @@ matches one regex against one raw request component, and that is all it can do.
 
 So the converted rule set is measured against ordinary traffic and against
 attacks, with `nginx` itself, by [`tests/test_nginx_blocking.py`](tests/test_nginx_blocking.py).
-Against the rules in this repository (the nginx row of the table below), 122
+Against the rules in this repository (the nginx row of the table below), 128
 ordinary requests in twelve categories of what a false positive looks like, and 21
 attacks ([`patterns/corpus.py`](patterns/corpus.py)):
 
 | | |
 |---|---|
-| Ordinary requests refused | **0 of 122** |
-| Attacks refused, sent in clear | **18 of 21** |
+| Ordinary requests refused | **0 of 128** |
+| Attacks refused, sent in clear | **17 of 21** |
 | Attacks refused, percent-encoded | **6 of 21** |
 
 The gap between the last two rows is the transformation chain. `nginx` cannot
@@ -75,13 +75,21 @@ Three further limits, all visible in the header of the generated
   request that matched it, and again in the test output. Adding a request to the
   corpus can exclude more: that is what it is for, and what a reported false
   positive should do first (see CONTRIBUTING).
+- **Rules that are part of a chain are not emitted.** A chain matches when every
+  record does, and a record on its own is another rule. The head of CRS 920480 is
+  any `charset=` in a Content-Type, and the link that makes it a rule (the charset is
+  not one that is allowed) reads a transaction variable that no target here has. It
+  was written alone, and refused `application/json; charset=utf-8` in **all four
+  targets**: nothing in the corpus had a charset, so nothing noticed, and every
+  release carried it until the corpus did. 128 records are in a chain; none is
+  written, and the corpus has the Content-Types that clients send.
 - **Rules that record rather than refuse are not emitted.** CRS 921170 is
   `@rx .`, matches any character, declares `pass`, and exists to count repeated
   parameter names.
 - **`@rx`, `@pm` and `@pmFromFile` convert.** The two phrase operators are a
   case-insensitive match against a list, which is an alternation of the phrases,
-  written in as few `map` keys as nginx's parameter limit allows (15 rules, 200 keys
-  in all, from 6,125 phrases the IR carries). That is what catches a scanner
+  written in as few `map` keys as nginx's parameter limit allows (14 rules, 28 keys,
+  from the 6,125 phrases the IR carries). That is what catches a scanner
   User-Agent and a request for `/.env` or `/.git/config`, which CRS refuses with
   `@pmFromFile`. `@detectSQLi` and `@detectXSS` are libinjection and `@lt`/`@ge` are
   anomaly-score comparisons: none of them is a regular expression or a list, so none
@@ -105,30 +113,30 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 
 | Target | Full | Approximate | Unsound | Dropped |
 |---|---:|---:|---:|---:|
-| Nginx | 13 | 173 | 0 | 563 |
-| Apache (ModSecurity) | 9 | 170 | 0 | 570 |
+| Nginx | 13 | 159 | 0 | 577 |
+| Apache (ModSecurity) | 9 | 160 | 0 | 580 |
 | Traefik | 0 | 3 | 0 | 746 |
-| HAProxy | 6 | 171 | 0 | 572 |
+| HAProxy | 6 | 160 | 0 | 583 |
 
 **Why a record is dropped**, by the first reason the backend found:
 
 | Reason | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
 |---|---:|---:|---:|---:|
-| an operator the backend cannot express | 368 | 398 | 2 | 398 |
-| matched on a request component the target does not have | 106 | 93 | 685 | 93 |
+| an operator the backend cannot express | 292 | 319 | 2 | 319 |
+| matched on a request component the target does not have | 78 | 65 | 561 | 65 |
+| part of a chain, and the target cannot require all of it | 128 | 128 | 128 | 128 |
 | not a rule: it changes another rule | 54 | 54 | 54 | 54 |
-| it refuses ordinary traffic once converted | 15 | 21 |  | 15 |
+| it refuses ordinary traffic once converted | 8 | 13 |  | 8 |
 | longer than the target accepts | 16 |  |  |  |
-| its severity is below what refuses, and the target cannot only record |  |  | 5 | 8 |
-| it records and does not refuse | 4 | 4 |  | 4 |
+| its severity is below what refuses, and the target cannot only record |  |  | 1 | 8 |
+| it records and does not refuse | 1 | 1 |  | 1 |
 
 **What a written rule loses**, in how many of them:
 
 | Loss | Nginx | Apache (ModSecurity) | Traefik | HAProxy |
 |---|---:|---:|---:|---:|
-| matched on other variables than the rule names | 161 | 164 | 3 | 168 |
-| transformations the rule was written to run after are not applied | 128 | 116 | 2 | 115 |
-| a chain written without all of its links | 14 | 10 |  | 11 |
+| matched on other variables than the rule names | 153 | 157 | 3 | 160 |
+| transformations the rule was written to run after are not applied | 122 | 112 | 2 | 111 |
 <!-- coverage:end -->
 
 The nginx figures above are measured on the rules in its row here. The table is
@@ -151,7 +159,7 @@ expressions HAProxy's parser takes for unmatched quotes, a fetch it does not hav
 hundreds of names, documented as a pattern file that it was not. It is now what was
 documented: pattern files, which HAProxy reads a regular expression to a line, and a
 `waf.cfg` to paste into a `frontend`. The test runs it in a real HAProxy: of the 21
-attacks, 15 are refused in clear and 10 percent-encoded (`url_dec`), and 0 of the 122
+attacks, 12 are refused in clear and 10 percent-encoded (`url_dec`), and 0 of the 128
 ordinary requests.
 
 Apache was not loading until [#55](https://github.com/fabriziosalmi/patterns/issues/55):
@@ -159,7 +167,7 @@ it wrote the operators CRS names as if they were patterns, after `re.escape` had
 them into other patterns (`Failed to resolve operator: lt\`), and its bad-bot list gave
 every rule the same id ([#80](https://github.com/fabriziosalmi/patterns/issues/80)). It
 now writes `@rx` as CRS wrote it, and the test runs it in a real Apache with ModSecurity:
-none of the 122 ordinary requests is refused, and 13 of the 21 attacks are, in clear
+none of the 128 ordinary requests is refused, and 13 of the 21 attacks are, in clear
 and percent-encoded, because ModSecurity decodes `ARGS` before a rule reads it, which
 `nginx` cannot do.
 

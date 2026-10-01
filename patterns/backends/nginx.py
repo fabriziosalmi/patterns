@@ -315,6 +315,15 @@ def generate_nginx_waf(rules: List[Dict], crs_ref: str = "latest",
         pattern = rule["pattern"]
         severity = rule.get("severity", "medium").lower() # get severity
 
+        # A chain matches when every record does, and a record on its own is another rule:
+        # the head of 920480 is any `charset=` in a Content-Type, and the link that makes it a
+        # rule (the charset is not one that is allowed) is a transaction variable no target has.
+        # Written alone it refused `application/json; charset=utf-8`, in all four targets.
+        if rule.get("chain"):
+            decisions.append(Decision(index, False, "chain-unsupported",
+                                      f"{rule['chain']['role']} of {rule['chain']['head']}"))
+            continue
+
         # What the rule matches with: a regular expression, or a list of phrases
         # written as the alternations that fit a key.
         operator = operator_of(rule)

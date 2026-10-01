@@ -127,6 +127,15 @@ check("an address is in a documentation range",
                                 r"python-requests|curl|Prometheus|orders-service|bingbot|Googlebot)[/ :]"
                                 + re.escape(a), " ".join(everything))}), [])
 
+print("the Content-Types a client sends")
+types = [e["content_type"] for e in BENIGN if e["content_type"]]
+check("some carry a charset, with a space and without: a rule that reads `charset=` as a sign of something "
+      "refused every one of them in all four targets, and nothing in the corpus said so",
+      sum("charset=" in t for t in types) >= 4 and any(";charset=" in t for t in types)
+      and any("; charset=" in t for t in types), True)
+check("one is a multipart form with a boundary", any(t.startswith("multipart/form-data; boundary=") for t in types), True)
+check("one is a vendor media type with a suffix and a parameter", any("+json" in t and ";" in t for t in types), True)
+
 print("what the README says")
 readme = (REPO_ROOT / "README.md").read_text()
 check("the README counts the ordinary requests it is measured against",
