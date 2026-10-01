@@ -80,7 +80,7 @@ From `2026-10-01-crs-v4.29.0-2` on, releases are **immutable on GitHub as well**
 gh release verify 2026-10-01-crs-v4.29.0-2 --repo fabriziosalmi/patterns
 ```
 
-It prints `Release ... verified!` and the hash of each asset. This is a third check beside the signature and the attestation, and it does not replace them. The first release of that day, `2026-10-01-crs-v4.29.0`, predates the setting and is only as immutable as the signatures make it; it is the one that has [the Content-Type bug](https://github.com/fabriziosalmi/patterns/pull/86).
+It prints `Release ... verified!` and the hash of each asset. This is a third check beside the signature and the attestation, and it does not replace them. The first release of that day, `2026-10-01-crs-v4.29.0`, was published before the setting was on. GitHub locked it when its notes were edited, to add a warning that its files must not be used (they carry [the Content-Type bug](https://github.com/fabriziosalmi/patterns/pull/86), and its Apache, HAProxy and Traefik files do not load). Its files are the ones that were signed: the signature and `SHA256SUMS` verify, and `gh release verify 2026-10-01-crs-v4.29.0` passes. They are what they say, and what they say was wrong: use `2026-10-01-crs-v4.29.0-2` or a later release.
 
 ## What this proves, and what it does not
 
