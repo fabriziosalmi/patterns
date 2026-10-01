@@ -58,8 +58,12 @@ EXPECTED: Dict = {
     "loads": True,
     # Ordinary requests the rules refuse, by name: none, since a rule that matches one is not written.
     "benign": [],
-    "floor_clear": 0,
-    "floor_encoded": 0,
+    "floor_clear": 1,
+    "floor_encoded": 1,
+    # What only a phrase list catches (#52, #92): CRS refuses a scanner's User-Agent with
+    # `@pmFromFile scanners-user-agents.data`, which is one case-insensitive alternation of its phrases
+    # here. The plugin sees the User-Agent and nothing else, so nothing else of the attacks can be caught.
+    "must_catch": ["scanner user agent"],
     # A command substitution in the User-Agent, which the first expression of
     # middleware.toml matches: the written rules refuse, and the plugin reads `regex`.
     "probe_user_agent": "$(id)",
@@ -164,6 +168,11 @@ def exercise(traefik_dir: Path, expected: Dict, check: c.Checker) -> None:
     check.expect(f"refuse {expected['probe_user_agent']!r} in the User-Agent", probed, True)
     c.report_traffic(check, traffic, expected["benign"], expected["floor_clear"],
                      expected["floor_encoded"])
+    if expected.get("must_catch"):
+        print("\nwhat only a phrase list catches")
+        for label, caught in (("in clear", traffic.caught_clear), ("percent-encoded", traffic.caught_encoded)):
+            check.expect(f"{label}: {', '.join(expected['must_catch'])}",
+                         [n for n in expected["must_catch"] if n not in caught], [])
 
 
 def main() -> int:

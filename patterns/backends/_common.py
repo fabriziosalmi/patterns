@@ -115,6 +115,16 @@ def ascii_lower(value: str) -> str:
     return "".join(c.lower() if c < "\x80" else c for c in value)
 
 
+def go_quote_meta(text: str) -> str:
+    """
+    Text as a Go regular expression that matches exactly that text: Go's `regexp.QuoteMeta`.
+
+    It escapes `\\.+*?()|[]{}^$` and nothing else. Python's `re.escape` also escapes a space,
+    `-`, `#`, `&` and `~`, which RE2 does not take after a backslash everywhere.
+    """
+    return re.sub(r"([\\.+*?()|\[\]{}^$])", r"\\\1", text)
+
+
 def haproxy_pattern(expression: str) -> str:
     """
     One regular expression as a line of an HAProxy pattern file.

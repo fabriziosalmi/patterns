@@ -16,6 +16,12 @@ It takes `regex`, a list of Go regular expressions, and answers 403 when the
 User-Agent matches any of them (the expression is not anchored). Go's `regexp` is
 RE2, which is what the dialect check here is made for.
 
+`@pm` and `@pmFromFile` are written as one case-insensitive alternation of the
+escaped phrases, `(?i)(?:a|b|...)`, an entry for each list. Measured in the real plugin
+(Traefik 3.7) with the 790 phrases that CRS has for a User-Agent: an entry for each
+phrase is a loop of 790 interpreted iterations and took about 1.7 ms a request more than
+one entry with the same alternation, which cost nothing that could be told from the noise.
+
 This used to write `plugin.badbot` with a `userAgent` list. No plugin by that name
 takes that configuration, and the expressions were written into TOML basic strings
 where a backslash starts an escape, so Traefik refused the file before it got that
@@ -27,8 +33,8 @@ from typing import Dict, List, Optional, Tuple
 
 from patterns import dialects
 from patterns.backends import Backend, Capabilities, Compiled, Decision, Target, register
-from patterns.backends._common import operator_of, provenance_header, toml_string
-from patterns.corpus import first_ordinary_match
+from patterns.backends._common import go_quote_meta, operator_of, phrases_of, provenance_header, toml_string
+from patterns.corpus import first_ordinary_match, first_ordinary_phrase
 from patterns.ir import IR
 
 logger = logging.getLogger(__name__)
@@ -59,8 +65,10 @@ def explain_pattern(rule: Dict) -> Tuple[Optional[str], Optional[Tuple[str, str]
     return operator["argument"], None
 
 
-def generate_traefik_conf(rules: List[Dict], crs_ref: str = "latest") -> Compiled:
+def generate_traefik_conf(rules: List[Dict], crs_ref: str = "latest",
+                          data_files: Optional[Dict[str, List[str]]] = None) -> Compiled:
     """Builds the Traefik middleware configuration (middleware.toml)."""
+    data_files = data_files or {}
     decisions: List[Decision] = []
     out: List[str] = [
         provenance_header(crs_ref, Traefik.title),
@@ -72,8 +80,9 @@ def generate_traefik_conf(rules: List[Dict], crs_ref: str = "latest") -> Compile
 
     # Rules by category and location. The expressions of a group are a dict, not a
     # set: it drops duplicates and keeps the order they came in, where a set wrote
-    # them in hash-seed order.
-    categorized_rules: Dict[str, Dict[str, Dict[str, None]]] = {}
+    # them in hash-seed order. An expression that comes from a phrase list has a comment that says
+    # which; the others have None.
+    categorized_rules: Dict[str, Dict[str, Dict[str, Optional[str]]]] = {}
 
     for index, rule in enumerate(rules):
         rule_id = rule.get("id", "no_id")
@@ -100,6 +109,32 @@ def generate_traefik_conf(rules: List[Dict], crs_ref: str = "latest") -> Compile
             decisions.append(Decision(index, False, "severity-below-blocking", severity))
             continue
 
+        operator = operator_of(rule)
+        phrases = phrases_of(operator, data_files)
+        if phrases is None and operator["name"] == "pmFromFile" and not operator["negated"]:
+            decisions.append(Decision(index, False, "operator-unsupported",
+                                      "@pmFromFile (the IR has no such phrase list)"))
+            continue
+        if phrases is not None:
+            if not phrases:
+                decisions.append(Decision(index, False, "empty-pattern", "the phrase list has no phrases"))
+                continue
+            expression = "(?i)(?:" + "|".join(go_quote_meta(p) for p in phrases) + ")"
+            problem = dialects.check(Traefik.capabilities.dialect, expression)
+            if problem:
+                decisions.append(Decision(index, False, "invalid-regex", problem))
+                continue
+            ordinary = first_ordinary_phrase(phrases, "user_agent")
+            if ordinary is not None:
+                logger.warning(f"Excluding rule {rule_id}: it matches an ordinary request ({ordinary})")
+                decisions.append(Decision(index, False, "matches-benign-traffic", ordinary))
+                continue
+            what = operator["argument"].strip() if operator["name"] == "pmFromFile" else "@pm"
+            note = f"CRS {rule_id}: {what}, {len(phrases)} phrase{'' if len(phrases) == 1 else 's'}"
+            categorized_rules.setdefault(category, {}).setdefault(location, {}).setdefault(expression, note)
+            decisions.append(Decision(index, True, location=location))
+            continue
+
         expression, why = explain_pattern(rule)
         if not expression:
             decisions.append(Decision(index, False, *why))
@@ -120,7 +155,7 @@ def generate_traefik_conf(rules: List[Dict], crs_ref: str = "latest") -> Compile
             decisions.append(Decision(index, False, "matches-benign-traffic", ordinary))
             continue
 
-        categorized_rules.setdefault(category, {}).setdefault(location, {})[expression] = None
+        categorized_rules.setdefault(category, {}).setdefault(location, {}).setdefault(expression, None)
         decisions.append(Decision(index, True, location=location, pattern=expression))
 
     for category, location_rules in categorized_rules.items():
@@ -129,7 +164,9 @@ def generate_traefik_conf(rules: List[Dict], crs_ref: str = "latest") -> Compile
             out.append(f"[http.middlewares.{name}]\n")
             out.append(f"  [http.middlewares.{name}.plugin.{PLUGIN}]\n")
             out.append("    regex = [\n")
-            for expression in expressions:
+            for expression, note in expressions.items():
+                if note:
+                    out.append(f"      # {note}\n")
                 out.append(f"      {toml_string(expression)},\n")
             out.append("    ]\n\n")
 
@@ -145,11 +182,11 @@ class Traefik(Backend):
     # and nothing else. `(?i)` is kept: Go honours it.
     capabilities = Capabilities(
         dialect="re2",
-        operators=frozenset({"rx"}),
+        operators=frozenset({"rx", "pm", "pmFromFile"}),
         transformations=frozenset(),
         case_insensitive=True,
         locations={"user-agent": Target("User-Agent header")},
     )
 
     def compile(self, ir: IR) -> Compiled:
-        return generate_traefik_conf(ir.rules, ir.crs_ref)
+        return generate_traefik_conf(ir.rules, ir.crs_ref, ir.data_files)

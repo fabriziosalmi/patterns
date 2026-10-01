@@ -115,7 +115,7 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 |---|---:|---:|---:|---:|
 | Nginx | 11 | 159 | 0 | 579 |
 | Apache (ModSecurity) | 8 | 172 | 0 | 569 |
-| Traefik | 0 | 3 | 0 | 746 |
+| Traefik | 1 | 4 | 0 | 744 |
 | HAProxy | 7 | 173 | 0 | 569 |
 | Envoy | 7 | 177 | 0 | 565 |
 
@@ -123,7 +123,7 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 
 | Reason | Nginx | Apache (ModSecurity) | Traefik | HAProxy | Envoy |
 |---|---:|---:|---:|---:|---:|
-| an operator the backend cannot express | 292 | 292 | 2 | 292 | 292 |
+| an operator the backend cannot express | 292 | 292 |  | 292 | 292 |
 | matched on a request component the target does not have | 78 | 78 | 561 | 78 | 78 |
 | part of a chain, and the target cannot require all of it | 128 | 128 | 128 | 128 | 128 |
 | not a rule: it changes another rule | 54 | 54 | 54 | 54 | 54 |
@@ -136,8 +136,8 @@ Of the 749 records in the CRS v4.29.0 intermediate representation, what each tar
 
 | Loss | Nginx | Apache (ModSecurity) | Traefik | HAProxy | Envoy |
 |---|---:|---:|---:|---:|---:|
-| matched on other variables than the rule names | 153 | 167 | 3 | 173 | 177 |
-| transformations the rule was written to run after are not applied | 122 | 122 | 2 | 121 | 125 |
+| matched on other variables than the rule names | 153 | 167 | 4 | 173 | 177 |
+| transformations the rule was written to run after are not applied | 122 | 122 | 3 | 121 | 125 |
 <!-- coverage:end -->
 
 The nginx figures above are measured on the rules in its row here. The table is
@@ -179,7 +179,8 @@ Traefik needs a plugin, which Traefik's output was not written for until
 [#69](https://github.com/fabriziosalmi/patterns/issues/69): it is now written for
 [`traefik-plugin-blockuseragent`](https://github.com/agence-gaya/traefik-plugin-blockuseragent),
 and the test runs that plugin, unmodified. The plugin sees only the User-Agent, so
-the CRS rules that can be written for Traefik are three; its bad-bot list does the
+the CRS rules that can be written for Traefik are five (three that share one expression, and the two
+phrase lists, as one alternation each); its bad-bot list does the
 rest, and it is checked not to refuse search engines, link previews or monitors
 ([#78](https://github.com/fabriziosalmi/patterns/issues/78)).
 

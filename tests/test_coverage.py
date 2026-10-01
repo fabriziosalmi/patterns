@@ -248,9 +248,9 @@ check("traefik declares it is: (?i) is kept, which Go honours",
 # engine compiles, and nothing an ordinary request matches.
 check("traefik writes only rules that refuse: severity high",
       sorted({R.rules[d.index]["severity"] for d in compiled["traefik"].decisions if d.emitted}), ["high"])
-check("and only @rx, not negated",
+check("and only @rx, @pm and @pmFromFile, not negated",
       sorted({(R.rules[d.index]["operator"]["name"], R.rules[d.index]["operator"]["negated"])
-              for d in compiled["traefik"].decisions if d.emitted}), [("rx", False)])
+              for d in compiled["traefik"].decisions if d.emitted}), [("pmFromFile", False), ("rx", False)])
 UA = {"location": "User-Agent"}
 
 
@@ -859,6 +859,63 @@ if tomllib:
     check("and the bad-bot list, which badbots.py writes",
           len(tomllib.loads((REPO_ROOT / "waf_patterns" / "traefik" / "bots.toml").read_text())
               ["http"]["middlewares"]["bad_bot_block"]["plugin"]["blockuseragent"]["regex"]) > 1000, True)
+print("what the Traefik backend writes for a list of phrases")
+
+
+def traefik_phrases(argument, name="pmFromFile", data=None, negated=False, **extra):
+    """What the Traefik backend does with one phrase rule made for the purpose, and the file it writes."""
+    record = rule(operator={"name": name, "negated": negated, "argument": argument},
+                  **{"location": "User-Agent", **extra})
+    one = backends.get("traefik").compile(ir.IR(rules=[record], data_files=data or {}))
+    d = one.decisions[0]
+    return (d.emitted, d.reason, d.detail), one.files["middleware.toml"]
+
+
+def traefik_entries(text):
+    """The expressions of the `regex` array, as the literal strings they are written as."""
+    return re.findall(r"^      '(.*)',$", text, re.M)
+
+
+inline, text = traefik_phrases("zqxjk-one zq.two", "pm")
+check("traefik: @pm is written as one case-insensitive alternation of its phrases, each escaped",
+      (inline[0], traefik_entries(text)), (True, [r"(?i)(?:zqxjk-one|zq\.two)"]))
+listed, text = traefik_phrases("words.data", data=WORDS)
+check("@pmFromFile is written the same way, from the list the IR carries, in the order CRS has them",
+      (listed[0], traefik_entries(text)), (True, [r"(?i)(?:zqxjk-one|zq\.two|ZQ three)"]))
+check("and a comment says which CRS rule and which list, and how many phrases",
+      "      # CRS 1: words.data, 3 phrases\n      '(?i)(?:" in text, True)
+check("one phrase is `1 phrase`", "# CRS 1: @pm, 1 phrase\n" in traefik_phrases("zqxjk", "pm")[1], True)
+metas = ["a.b", "c(d)", "e|f", "[g]", "h$", "i\\j", "k+l", "m*n", "o?p", "q{2}", "r^s", "zq é"]
+metas_text = traefik_phrases("m.data", data={"m.data": metas})[1]
+[alternation] = [e for e in re.findall(r"^      (.*),$", metas_text, re.M)]
+alternation = alternation.strip("'")
+check("every phrase is matched as the text it is, not as an expression, and case is ignored: "
+      "`a.b` is not `axb`, `h$` is not an end of line",
+      ([bool(re.search(alternation, v)) for v in metas], [bool(re.search(alternation, v.upper())) for v in metas],
+       [bool(re.search(alternation, v)) for v in ("axb", "cd", "e", "ef", "g", "h", "i", "kl", "mn", "o", "q2", "rs", "zq")]),
+      ([True] * len(metas), [True] * len(metas), [False] * 13))
+if tomllib:
+    check("and the file is TOML that reads back as written",
+          tomllib.loads(metas_text)["http"]["middlewares"]["waf_test_user_agent"]["plugin"]["blockuseragent"]["regex"],
+          [alternation])
+check("a phrase list the IR does not have is not guessed at",
+      traefik_phrases("gone.data", data=WORDS)[0], (False, "operator-unsupported", "@pmFromFile (the IR has no such phrase list)"))
+check("an empty one is not written", traefik_phrases("e.data", data={"e.data": []})[0][:2], (False, "empty-pattern"))
+check("a negated one is not: it is not what a rule that refuses can say",
+      traefik_phrases("zqxjk", "pm", negated=True)[0][:2], (False, "operator-unsupported"))
+check("one an ordinary client holds is not written, whatever the case: `Googlebot`",
+      traefik_phrases("GOOGLEBOT zqxjk", "pm")[0][:2], (False, "matches-benign-traffic"))
+check("and a phrase that is last in a long list keeps the whole rule out: it is written whole or not at all",
+      traefik_phrases("big.data", data={"big.data": late})[0][:2], (False, "matches-benign-traffic"))
+check("one below `high` is not written, as an expression is not",
+      traefik_phrases("zqxjk", "pm", severity="medium")[0][:2], (False, "severity-below-blocking"))
+check("nor one on anything but the User-Agent: the plugin sees nothing else",
+      traefik_phrases("zqxjk", "pm", location="Query-String")[0][:2], (False, "location-unsupported"))
+check("two rules that read the same list on the same header are one entry",
+      len(traefik_entries(backends.get("traefik").compile(ir.IR(rules=[
+          rule("1", operator={"name": "pmFromFile", "negated": False, "argument": "words.data"}, location="User-Agent"),
+          rule("2", operator={"name": "pmFromFile", "negated": False, "argument": "words.data"}, location="User-Agent")],
+          data_files=WORDS)).files["middleware.toml"])), 1)
 check("what each backend declares it can express is what is shown above and nothing more: "
       "a claim added here has to be shown in the output first",
       {n: (c.capabilities.dialect, sorted(c.capabilities.operators),
@@ -866,7 +923,7 @@ check("what each backend declares it can express is what is shown above and noth
        for n, c in ((n, backends.get(n)) for n in backends.names())},
       {"nginx": ("pcre", ["pm", "pmFromFile", "rx"], ["lowercase"], True),
        "apache": ("pcre", ["pm", "pmFromFile", "rx"], ["lowercase"], True),
-       "traefik": ("re2", ["rx"], [], True),
+       "traefik": ("re2", ["pm", "pmFromFile", "rx"], [], True),
        "haproxy": ("pcre", ["pm", "pmFromFile", "rx"], ["lowercase"], True),
        "envoy": ("re2", ["pm", "pmFromFile", "rx"], ["lowercase"], True)})
 check("every location a backend wrote a regular expression on is one it declares",

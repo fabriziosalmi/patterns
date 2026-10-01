@@ -5,7 +5,7 @@ This guide explains how to consume the generated middleware in **Traefik v2 / v3
 Traefik has no built-in middleware that matches a header against a regular expression, so the output needs a plugin. It is written for [`agence-gaya/traefik-plugin-blockuseragent`](https://github.com/agence-gaya/traefik-plugin-blockuseragent) (Apache-2.0, in Traefik's plugin catalog): a list of regular expressions, matched against the `User-Agent` header, and a `403` when one matches.
 
 ::: warning What this can and cannot do
-The plugin sees the `User-Agent` header and nothing else: not the path, the query string, the cookies or the body. Of the CRS rules, only the few that are aimed at that header and that refuse (three at the time of writing) can be written for it, so `middleware.toml` is short. The part that does most of the work is the bad-bot list, `bots.toml`. For the rest of what CRS covers, see [Coverage](/coverage), and use a WAF that reads requests (Coraza, ModSecurity) in front of or behind Traefik.
+The plugin sees the `User-Agent` header and nothing else: not the path, the query string, the cookies or the body. Of the CRS rules, only the few that are aimed at that header and that refuse (five at the time of writing: three rules that share one expression, and two phrase lists) can be written for it, so `middleware.toml` is short. A phrase list (`@pmFromFile`, which CRS uses for a scanner's User-Agent) is written as one case-insensitive alternation of its phrases, each escaped, and an entry of `regex` for each list: measured in the real plugin, an entry for each of the 790 phrases cost about 1.7 ms a request more than the one alternation. The part that does most of the work is the bad-bot list, `bots.toml`. For the rest of what CRS covers, see [Coverage](/coverage), and use a WAF that reads requests (Coraza, ModSecurity) in front of or behind Traefik.
 :::
 
 ::: tip What the bad-bot list refuses
@@ -23,7 +23,7 @@ The plugin sees the `User-Agent` header and nothing else: not the path, the quer
 
 | File | Purpose |
 |------|---------|
-| `middleware.toml` | The CRS rules that can be written for a User-Agent plugin: one middleware per category, e.g. `waf_rce_user_agent` |
+| `middleware.toml` | The CRS rules that can be written for a User-Agent plugin: one middleware per category, e.g. `waf_rce_user_agent`; a comment above each phrase list says which CRS rule and which list |
 | `bots.toml` | The bad-bot list: one middleware, `bad_bot_block` |
 
 ## Step 1 &mdash; Register the plugin
