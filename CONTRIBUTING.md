@@ -78,6 +78,20 @@ We welcome pull requests! Here's how to submit one:
    ```
    What each target does today is `EXPECTED` at the top of its test, with the issue that tracks it.
 
+   **Run what GitHub will run, before you push.** `scripts/ci-local.sh` reproduces the workflows
+   locally: it reads the commands from `.github/workflows/*.yml`, so it cannot drift from them, and
+   runs them on a Linux box that has what CI has (Python 3.11 and 3.13, nginx, Docker, Node 20). The
+   box is the `ci-patterns` LXC, provisioned by `scripts/ci-local-setup.sh`; from your machine,
+   `scripts/ci-remote.sh` sends the working tree there (committed or not) and runs it:
+   ```bash
+   export CI_HOST=ci@<address of the ci-patterns box>
+   scripts/ci-remote.sh --list                 # the stages
+   scripts/ci-remote.sh fast                   # the IR, the committed output, nginx: ~20 s
+   scripts/ci-remote.sh ci                     # everything the PR checks run, apache/haproxy/traefik/envoy in docker
+   scripts/ci-remote.sh apache envoy           # any stages
+   ```
+   On a Linux box that has the tools, run `scripts/ci-local.sh` directly.
+
    If you change the format of `owasp_rules.json`, change `schema/ir.schema.json` and raise its `schema_version`: [Intermediate representation](docs/ir.md) says how.
 
 5. **Commit and Push**
