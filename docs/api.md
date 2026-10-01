@@ -86,7 +86,6 @@ INPUT_FILE=custom.json OUTPUT_DIR=/tmp/out python json2nginx.py
 |------|---------|
 | `waf_maps.conf` | `map` directives &mdash; include in the `http` block |
 | `waf_rules.conf` | `if` rules &mdash; include in the `server` block |
-| `<category>.conf` | One file per OWASP category, **for inspection only** |
 | `README.md` | In-tree usage notes |
 
 | Env var | Default |

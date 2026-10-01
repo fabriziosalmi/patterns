@@ -161,8 +161,9 @@ plugin the output is written for, which I could not identify (see #69).
 | **OWASP CRS coverage** | SQLi, XSS, RCE, LFI, RFI, plus generic anomaly and protocol-violation rules. |
 | **Native output** | Nginx `map`/`if`, Apache `SecRule`, Traefik middleware TOML, HAProxy ACL files. |
 | **Bad-bot blocking** | Curated User-Agent lists from public sources, with safe defaults that do **not** block major search engines. |
-| **Daily refresh** | A scheduled GitHub Actions workflow rebuilds every backend and publishes a fresh release. |
-| **Pre-built archives** | Skip the toolchain &mdash; download `nginx_waf.zip`, `apache_waf.zip`, `traefik_waf.zip`, or `haproxy_waf.zip`. |
+| **Nightly, tested** | A scheduled GitHub Actions workflow rebuilds every backend, runs the tests on the result, and publishes only if they pass and something changed. |
+| **Pre-built, signed archives** | Skip the toolchain &mdash; download `nginx_waf.zip`, `apache_waf.zip`, `traefik_waf.zip`, or `haproxy_waf.zip` from a dated release that is never replaced, and [verify it](https://fabriziosalmi.github.io/patterns/verify). |
+| **Measured** | What each target does with each rule is generated and published: [coverage](https://fabriziosalmi.github.io/patterns/coverage). |
 | **Composable** | Each backend is a small Python converter on top of one JSON intermediate. Adding a new platform is a few hundred lines. |
 
 > Using **Caddy**? See the dedicated [`caddy-waf`](https://github.com/fabriziosalmi/caddy-waf) project.
@@ -177,6 +178,11 @@ curl -LO https://github.com/fabriziosalmi/patterns/releases/latest/download/ngin
 unzip nginx_waf.zip -d /etc/nginx/waf_patterns
 ```
 
+> **Only the Nginx output loads today.** Apache with ModSecurity, HAProxy and Traefik refuse
+> the generated files in their real servers: see [Does it load?](#does-it-load). Releases are
+> dated (`2026-10-01-crs-v4.29.0`), never replaced and signed; [verify one](https://fabriziosalmi.github.io/patterns/verify)
+> before you deploy it, or pin to it with `releases/download/<tag>/`.
+
 Then follow the [Nginx](https://fabriziosalmi.github.io/patterns/nginx),
 [Apache](https://fabriziosalmi.github.io/patterns/apache),
 [Traefik](https://fabriziosalmi.github.io/patterns/traefik), or
@@ -184,7 +190,7 @@ Then follow the [Nginx](https://fabriziosalmi.github.io/patterns/nginx),
 
 ### Option 2 &mdash; build from source
 
-Requires **Python 3.9+**, `pip`, and `git`.
+Requires **Python 3.11+**, `pip`, and `git`.
 
 ```bash
 git clone https://github.com/fabriziosalmi/patterns.git

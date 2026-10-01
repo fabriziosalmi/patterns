@@ -2,6 +2,10 @@
 
 This guide explains how to plug the generated rules into HAProxy using **ACL** files.
 
+::: warning The generated HAProxy rules do not load today
+`haproxy -c` refuses `waf.acl` however it is loaded: as a `frontend` fragment it fails on unmatched quotes and on fetches HAProxy does not have ([#67](https://github.com/fabriziosalmi/patterns/issues/67)), and loaded with `-f`, as this page says, HAProxy takes each line of the file for a regular expression, because it is a configuration fragment and not a pattern file ([#68](https://github.com/fabriziosalmi/patterns/issues/68)). `tests/test_haproxy_blocking.py` runs the real HAProxy on every change. What follows is the intended use.
+:::
+
 ## Quick start
 
 1. Download `haproxy_waf.zip` from the [latest release](https://github.com/fabriziosalmi/patterns/releases/latest).

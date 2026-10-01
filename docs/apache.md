@@ -2,6 +2,10 @@
 
 This guide explains how to deploy the generated rules in Apache HTTPD using the **ModSecurity** engine.
 
+::: warning The generated Apache rules do not load today
+Run through Apache 2.4 with ModSecurity 2, `httpd -t` fails on the committed output (`Failed to resolve operator`): operators CRS writes as `@lt`, `@pm` and the like are written out as if they were patterns ([#55](https://github.com/fabriziosalmi/patterns/issues/55)). The coverage page says [what each target does with each rule](/coverage), and `tests/test_apache_blocking.py` runs the real server on every change. What follows is the intended use.
+:::
+
 ## Prerequisites
 
 - Apache HTTPD **2.4+**

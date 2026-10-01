@@ -2,6 +2,10 @@
 
 This guide explains how to consume the generated WAF middleware in **Traefik v2 / v3**.
 
+::: warning The generated Traefik middleware does not load today
+Traefik 3.7 refuses `middleware.toml` before it reaches a middleware: the expressions are written into TOML basic strings, where `\$` is not an escape, and `bots.toml` has the same problem ([#69](https://github.com/fabriziosalmi/patterns/issues/69)). The output also needs a plugin named `badbot` that takes a `userAgent` list, and I could not identify which one it is meant for; `tests/test_traefik_blocking.py` runs a real Traefik with a stand-in. What follows is the intended use.
+:::
+
 ## Quick start
 
 1. Download `traefik_waf.zip` from the [latest release](https://github.com/fabriziosalmi/patterns/releases/latest).
@@ -87,7 +91,7 @@ The `@file` suffix tells Traefik to resolve the middleware from the file provide
 
 ## Plugin compatibility
 
-`middleware.toml` is generated against Traefik's built-in middleware primitives. If you prefer a dedicated WAF plugin (e.g. one of the community plugins on [Traefik Plugins](https://plugins.traefik.io/)), you can declare it side-by-side and chain both:
+`middleware.toml` is written as `[http.middlewares.NAME.plugin.badbot]` with a `userAgent` list of regular expressions, so it needs a plugin registered under the name `badbot` in the static configuration. It is not generated against Traefik's built-in middlewares, which have no User-Agent matching. If you prefer a dedicated WAF plugin (e.g. one of the community plugins on [Traefik Plugins](https://plugins.traefik.io/)), you can declare it side-by-side and chain both:
 
 ```yaml
 experimental:
@@ -101,12 +105,13 @@ experimental:
 
 ### Add custom patterns
 
-Edit `middleware.toml` to extend the regex set:
+Add an expression to the `userAgent` list of a middleware in `middleware.toml`. Write it as a TOML *literal* string (`'...'`) so that backslashes mean what they say:
 
 ```toml
-[[http.middlewares.waf-protection.plugin.rewriteHeaders.replacements]]
-  regex = "your-custom-pattern"
-  replacement = "BLOCKED"
+[http.middlewares.waf_custom_user_agent.plugin.badbot]
+  userAgent = [
+    'your-custom-pattern',
+  ]
 ```
 
 ### Logging
