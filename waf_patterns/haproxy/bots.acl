@@ -3,11 +3,13 @@
 #   acl bad_bot hdr(user-agent) -m reg -i -f /etc/haproxy/waf/bots.acl
 #   http-request deny if bad_bot
 # Left out, an ordinary client would be refused: Apache-HttpClient (matches apache httpclient)
+# Left out, an ordinary client would be refused: Citoid (matches citoid)
 # Left out, an ordinary client would be refused: Disco (matches discord link preview)
 # Left out, an ordinary client would be refused: Pingdom (matches pingdom)
 # Left out, an ordinary client would be refused: StatusCake (matches statuscake)
 # Left out, an ordinary client would be refused: WhatsApp (matches whatsapp link preview)
 # Left out, an ordinary client would be refused: Yandex(?!Search) (matches yandexbot)
+# Left out, an ordinary client would be refused: ZoteroTranslationServer (matches zotero-translation-server)
 # Left out, an ordinary client would be refused: [a-z0-9\-_]*(bot|crawl|headless|archiver|transcoder|spider|uptime|validator|fetcher|cron|checker|reader|extractor|monitoring|analyzer|scraper) (matches googlebot)
 # Left out, an ordinary client would be refused: acebookexternalhit\/ (matches facebook link preview)
 # Left out, an ordinary client would be refused: baidu\.com (matches baiduspider)
@@ -202,7 +204,6 @@ Chirp\/
 Chlooe
 Chromaxa
 CirrusExplorer
-Citoid
 Claritybot
 Clarsentia
 Claude-User
@@ -1374,7 +1375,6 @@ Zombie\.js
 ZoomBot
 Zoom\.Mac
 ZoominfoBot
-ZoteroTranslationServer
 ZumBot
 ZyBorg
 ^Aether

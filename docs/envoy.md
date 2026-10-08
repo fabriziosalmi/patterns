@@ -13,7 +13,7 @@ Each rule is written as CRS wrote it, a regular expression or a list of phrases,
 - **`(?i)` is kept** and a rule CRS gives `t:lowercase` is matched with case ignored. The other transformations are not applied, and the [coverage matrix](/coverage) says which, rule by rule.
 - **The query string is matched together with the path**, on `:path`: a pattern written for one value sees the path and the other values too. The request body is not matched.
 - **No anomaly score.** Every rule decides alone.
-- **A rule that refuses ordinary traffic is not written.** Each is checked against [a corpus of ordinary requests](https://github.com/fabriziosalmi/patterns/blob/main/patterns/corpus.py) and left out if one matches. [`tests/test_envoy_blocking.py`](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_envoy_blocking.py) runs the files in a real Envoy on every change: 162 ordinary requests, none refused; of 21 attacks, 17 refused in clear and 6 percent-encoded.
+- **A rule that refuses ordinary traffic is not written.** Each is checked against [a corpus of ordinary requests](https://github.com/fabriziosalmi/patterns/blob/main/patterns/corpus.py) and left out if one matches. [`tests/test_envoy_blocking.py`](https://github.com/fabriziosalmi/patterns/blob/main/tests/test_envoy_blocking.py) runs the files in a real Envoy on every change: 164 ordinary requests, none refused; of 21 attacks, 17 refused in clear and 6 percent-encoded.
 
 At CRS v4.29.0 that is 184 rules written (7 in full, 177 with a named loss). It is a useful first filter in front of an application, not the Core Rule Set.
 

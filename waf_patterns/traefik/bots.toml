@@ -1,9 +1,11 @@
 # Left out, an ordinary client would be refused: Apache-HttpClient (matches apache httpclient)
+# Left out, an ordinary client would be refused: Citoid (matches citoid)
 # Left out, an ordinary client would be refused: Disco (matches discord link preview)
 # Left out, an ordinary client would be refused: Pingdom (matches pingdom)
 # Left out, an ordinary client would be refused: StatusCake (matches statuscake)
 # Left out, an ordinary client would be refused: WhatsApp (matches whatsapp link preview)
 # Left out, an ordinary client would be refused: Yandex(?!Search) (matches yandexbot)
+# Left out, an ordinary client would be refused: ZoteroTranslationServer (matches zotero-translation-server)
 # Left out, an ordinary client would be refused: [a-z0-9\-_]*(bot|crawl|headless|archiver|transcoder|spider|uptime|validator|fetcher|cron|checker|reader|extractor|monitoring|analyzer|scraper) (matches googlebot)
 # Left out, an ordinary client would be refused: acebookexternalhit\/ (matches facebook link preview)
 # Left out, an ordinary client would be refused: baidu\.com (matches baiduspider)
@@ -202,7 +204,6 @@
       '(?i)Chlooe',
       '(?i)Chromaxa',
       '(?i)CirrusExplorer',
-      '(?i)Citoid',
       '(?i)Claritybot',
       '(?i)Clarsentia',
       '(?i)Claude-User',
@@ -1374,7 +1375,6 @@
       '(?i)ZoomBot',
       '(?i)Zoom\.Mac',
       '(?i)ZoominfoBot',
-      '(?i)ZoteroTranslationServer',
       '(?i)ZumBot',
       '(?i)ZyBorg',
       '(?i)^Aether',
