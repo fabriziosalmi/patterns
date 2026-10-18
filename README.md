@@ -46,13 +46,13 @@ matches one regex against one raw request component, and that is all it can do.
 
 So the converted rule set is measured against ordinary traffic and against
 attacks, with `nginx` itself, by [`tests/test_nginx_blocking.py`](tests/test_nginx_blocking.py).
-Against the rules in this repository (the nginx row of the table below), 162
+Against the rules in this repository (the nginx row of the table below), 164
 ordinary requests in twelve categories of what a false positive looks like, and 21
 attacks ([`patterns/corpus.py`](patterns/corpus.py)):
 
 | | |
 |---|---|
-| Ordinary requests refused | **0 of 162** |
+| Ordinary requests refused | **0 of 164** |
 | Attacks refused, sent in clear | **17 of 21** |
 | Attacks refused, percent-encoded | **6 of 21** |
 
@@ -161,7 +161,7 @@ expressions HAProxy's parser takes for unmatched quotes, a fetch it does not hav
 hundreds of names, documented as a pattern file that it was not. It is now what was
 documented: pattern files, which HAProxy reads a regular expression to a line, and a
 `waf.cfg` to paste into a `frontend`. The test runs it in a real HAProxy: of the 21
-attacks, 17 are refused in clear and 14 percent-encoded (`url_dec`), and 0 of the 162
+attacks, 17 are refused in clear and 14 percent-encoded (`url_dec`), and 0 of the 164
 ordinary requests. Its phrase lists (`@pmFromFile`: `/.env`, `/.git/config`, scanners) are the
 `*.data` files, loaded with `-m sub -i -f`.
 
@@ -170,7 +170,7 @@ it wrote the operators CRS names as if they were patterns, after `re.escape` had
 them into other patterns (`Failed to resolve operator: lt\`), and its bad-bot list gave
 every rule the same id ([#80](https://github.com/fabriziosalmi/patterns/issues/80)). It
 now writes `@rx` as CRS wrote it, and the test runs it in a real Apache with ModSecurity:
-none of the 162 ordinary requests is refused, and 17 of the 21 attacks are, in clear
+none of the 164 ordinary requests is refused, and 17 of the 21 attacks are, in clear
 and percent-encoded, because ModSecurity decodes `ARGS` before a rule reads it, which
 `nginx` cannot do. Its phrase lists (`@pmFromFile`, which CRS uses for `/.env`, `/.git/config` and
 scanners) are written as the `*.data` files ModSecurity reads from next to the rules.
