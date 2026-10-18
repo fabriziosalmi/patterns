@@ -8322,6 +8322,12 @@
                   name: 'user-agent'
                   string_match:
                     safe_regex:
+                      regex: '(?s:.*)(?i:^IronFountain-Leads)(?s:.*)'
+              # bad bot
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
                       regex: '(?s:.*)(?i:^Java\/)(?s:.*)'
               # bad bot
               - header:
@@ -8424,6 +8430,12 @@
                   name: 'user-agent'
                   string_match:
                     safe_regex:
+                      regex: '(?s:.*)(?i:^TheWebReport)(?s:.*)'
+              # bad bot
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
                       regex: '(?s:.*)(?i:^VSE\/[0-9])(?s:.*)'
               # bad bot
               - header:
@@ -8509,6 +8521,12 @@
                   string_match:
                     safe_regex:
                       regex: '(?s:.*)(?i:^visionheight\.com\/scan)(?s:.*)'
+              # bad bot
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
+                      regex: '(?s:.*)(?i:^webshopok-kutatas)(?s:.*)'
               # bad bot
               - header:
                   name: 'user-agent'

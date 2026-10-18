@@ -273,7 +273,10 @@ many = derive(change_severity)
 text = diff.to_markdown(diff.compare(OLD, many, targets=False), limit=2)
 check("it lists the most and counts the rest", "and 2 more, in `changes.json`" in text, True)
 check("there were four to list", diff.compare(OLD, many, targets=False)["summary"]["changed"], 4)
-check("it says which version to which", "CRS v4.29.0 to v9.9.9" in text, True)
+# The old version is whatever IR this run reads, which the nightly update
+# regenerates from the latest CRS: a hard-coded "v4.29.0" failed every night
+# from the day CRS v4.30.0 came out, and the update never landed.
+check("it says which version to which", f"CRS {OLD.crs_ref} to v9.9.9" in text, True)
 check("a value that is a word is shown", bool(re.search(r"severity \w+ to \w+", text)), True)
 
 print("the file")

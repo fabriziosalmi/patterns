@@ -1397,6 +1397,7 @@ ZyBorg
 ^HTTPClient\/
 ^HTTPing
 ^Hello from Palo Alto Networks
+^IronFountain-Leads
 ^Java\/
 ^Jeode\/
 ^Jetty\/
@@ -1414,6 +1415,7 @@ ZyBorg
 ^Ruby|Ruby\/[0-9]
 ^Swurl\ 
 ^TLS tester\ 
+^TheWebReport
 ^VSE\/[0-9]
 ^WordPress\.com
 ^XRL\/[0-9]
@@ -1429,6 +1431,7 @@ ZyBorg
 ^twine\/
 ^ureq
 ^visionheight\.com\/scan
+^webshopok-kutatas
 a3logics\.in
 a\.pr-cy\.ru
 aboutthedomain
