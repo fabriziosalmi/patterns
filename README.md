@@ -109,35 +109,35 @@ generated from the same record the files are built from, for all four targets
 ([how to read it](https://fabriziosalmi.github.io/patterns/coverage)):
 
 <!-- coverage:start -->
-Of the 749 records in the CRS v4.29.0 intermediate representation, what each target does:
+Of the 748 records in the CRS v4.30.0 intermediate representation, what each target does:
 
 | Target | Full | Approximate | Unsound | Dropped |
 |---|---:|---:|---:|---:|
-| Nginx | 11 | 159 | 0 | 579 |
-| Apache (ModSecurity) | 8 | 172 | 0 | 569 |
-| Traefik | 1 | 4 | 0 | 744 |
-| HAProxy | 7 | 173 | 0 | 569 |
-| Envoy | 7 | 177 | 0 | 565 |
+| Nginx | 11 | 159 | 0 | 578 |
+| Apache (ModSecurity) | 8 | 171 | 0 | 569 |
+| Traefik | 1 | 2 | 0 | 745 |
+| HAProxy | 7 | 172 | 0 | 569 |
+| Envoy | 7 | 176 | 0 | 565 |
 
 **Why a record is dropped**, by the first reason the backend found:
 
 | Reason | Nginx | Apache (ModSecurity) | Traefik | HAProxy | Envoy |
 |---|---:|---:|---:|---:|---:|
-| an operator the backend cannot express | 292 | 292 |  | 292 | 292 |
-| matched on a request component the target does not have | 78 | 78 | 561 | 78 | 78 |
-| part of a chain, and the target cannot require all of it | 128 | 128 | 128 | 128 | 128 |
-| not a rule: it changes another rule | 54 | 54 | 54 | 54 | 54 |
-| it refuses ordinary traffic once converted | 10 | 16 |  | 8 | 4 |
+| an operator the backend cannot express | 294 | 294 |  | 294 | 294 |
+| matched on a request component the target does not have | 73 | 73 | 562 | 73 | 73 |
+| part of a chain, and the target cannot require all of it | 127 | 127 | 127 | 127 | 127 |
+| not a rule: it changes another rule | 55 | 55 | 55 | 55 | 55 |
+| it refuses ordinary traffic once converted | 11 | 17 |  | 9 | 5 |
 | its severity is below what refuses, and the target cannot only record |  |  | 1 | 8 | 8 |
-| longer than the target accepts | 16 |  |  |  |  |
-| it records and does not refuse | 1 | 1 |  | 1 | 1 |
+| longer than the target accepts | 15 |  |  |  |  |
+| it records and does not refuse | 3 | 3 |  | 3 | 3 |
 
 **What a written rule loses**, in how many of them:
 
 | Loss | Nginx | Apache (ModSecurity) | Traefik | HAProxy | Envoy |
 |---|---:|---:|---:|---:|---:|
-| matched on other variables than the rule names | 153 | 167 | 4 | 173 | 177 |
-| transformations the rule was written to run after are not applied | 122 | 122 | 3 | 121 | 125 |
+| matched on other variables than the rule names | 153 | 166 | 2 | 172 | 176 |
+| transformations the rule was written to run after are not applied | 122 | 121 | 2 | 120 | 124 |
 <!-- coverage:end -->
 
 The nginx figures above are measured on the rules in its row here. The table is
