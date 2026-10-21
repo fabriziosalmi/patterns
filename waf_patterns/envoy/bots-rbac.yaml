@@ -1398,6 +1398,12 @@
                   name: 'user-agent'
                   string_match:
                     safe_regex:
+                      regex: '(?s:.*)(?i:CyberConvoyScout)(?s:.*)'
+              # bad bot
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
                       regex: '(?s:.*)(?i:CyotekWebCopy)(?s:.*)'
               # bad bot
               - header:
