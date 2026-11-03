@@ -142,7 +142,9 @@ jobs:
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git add owasp_rules.json waf_patterns README.md docs/coverage.md
+        # bot_ids.json is the id each bad-bot entry was given: committed with the rules,
+        # or the next night gives a new entry another id (#108).
+        git add owasp_rules.json bot_ids.json waf_patterns README.md docs/coverage.md
         # What was just added, not the working tree against it: `git diff --quiet`
         # after `git add` is always quiet.
         if git diff --cached --quiet; then

@@ -41,6 +41,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import badbots  # noqa: E402
+
+COMMITTED_BOT_IDS = badbots.BOT_IDS
 from patterns import corpus  # noqa: E402
 from patterns.backends._common import modsecurity_unquote  # noqa: E402
 
@@ -168,12 +170,24 @@ for fmt, found in entries.items():
 print("Apache: a rule of its own for each entry")
 
 
-def apache_written(bots, left=()):
-    """What badbots writes to bots.conf for Apache."""
+def apache_written(bots, left=(), ids=None):
+    """
+    What badbots writes to bots.conf for Apache.
+
+    The ids are kept in `ids`, a registry of the test's own, so that a test does not
+    write to the committed one; without it each call starts from an empty registry.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         badbots.OUTPUT_DIRS["apache"] = tmp
+        badbots.BOT_IDS = Path(ids or Path(tmp) / "bot_ids.json")
         badbots.generate_apache_conf(bots, left)
         return (Path(tmp) / "bots.conf").read_text()
+
+
+def apache_ids(text):
+    """The id of each entry in what badbots wrote for Apache."""
+    return {modsecurity_unquote(e): int(i)
+            for e, i in re.findall(r'"@rx \(\?i\)(.*?)" "id:(\d+),', text)}
 
 
 apache = apache_written(["AhrefsBot", r"008\/", 'say "hi"', r"a\\b", "zq(xjk", "100%{x}", " YLT"])
@@ -190,6 +204,46 @@ check("so is one with a macro, which ModSecurity would expand", "# Not written: 
 check("the file does not set the engine: that is the deployment's",
       re.findall(r"SecRuleEngine", apache), [])
 check("every written rule says what it is, so a log line can be read", apache.count("msg:'bad bot'"), 5)
+
+print("Apache: an entry keeps its id across releases (#108)")
+with tempfile.TemporaryDirectory() as registry_dir:
+    registry = Path(registry_dir) / "bot_ids.json"
+    first = apache_ids(apache_written(["AhrefsBot", r"^Dart\/[0-9]", "MJ12bot", "SemrushBot"], ids=registry))
+    check("a registry is written, with an id for each entry", sorted(badbots.load_bot_ids(registry)),
+          sorted(first))
+    again = apache_ids(apache_written(["AhrefsBot", r"^Dart\/[0-9]", "MJ12bot", "SemrushBot"], ids=registry))
+    check("the same list written again has the same ids", again, first)
+    # The list is sorted: a new entry that sorts before `^Dart` took its place, and
+    # `^Dart\/[0-9]` went from 8001372 to 8001373.
+    inserted = apache_ids(apache_written(["AhrefsBot", "Ahrefs2", r"^Dart\/[0-9]", "MJ12bot", "SemrushBot"],
+                                         ids=registry))
+    check("an entry added before others does not change their ids",
+          {e: i for e, i in inserted.items() if e != "Ahrefs2"}, first)
+    check("and the new entry gets the next id after the highest", inserted["Ahrefs2"], max(first.values()) + 1)
+    removed = apache_ids(apache_written(["AhrefsBot", "Ahrefs2", "MJ12bot", "SemrushBot"], ids=registry))
+    check("an entry taken out does not move the others",
+          removed, {e: i for e, i in inserted.items() if e != r"^Dart\/[0-9]"})
+    added = apache_ids(apache_written(["AhrefsBot", "Ahrefs2", "Bytespider", "MJ12bot", "SemrushBot"],
+                                      ids=registry))
+    check("and its id is not given to the next new entry",
+          added["Bytespider"] not in inserted.values(), True)
+    check("which gets the next id after the highest ever given", added["Bytespider"], max(inserted.values()) + 1)
+    back = apache_ids(apache_written(["AhrefsBot", r"^Dart\/[0-9]", "MJ12bot"], ids=registry))
+    check("an entry that comes back has the id it had", back[r"^Dart\/[0-9]"], first[r"^Dart\/[0-9]"])
+    check("the registry keeps every id it gave, and no two entries share one",
+          sorted(badbots.load_bot_ids(registry).values()), sorted(set(first.values()) | set(added.values())))
+
+print("the committed ids")
+committed_ids = apache_ids((ROOT / "apache" / "bots.conf").read_text())
+registry_ids = badbots.load_bot_ids(COMMITTED_BOT_IDS)
+check("every rule of the committed bots.conf has the id the registry gives it",
+      {e: i for e, i in committed_ids.items() if registry_ids.get(e) != i}, {})
+check("no two entries of the registry share an id",
+      len(set(registry_ids.values())), len(registry_ids))
+check("and every id is in the range of the bad-bot list",
+      [i for i in registry_ids.values() if not badbots.BOT_ID_OFFSET < i < 9_000_000], [])
+check("the entry of #108 keeps the id the release of 2026-10-21 gave it",
+      registry_ids.get(r"^Dart\/[0-9]"), 8001372)
 
 print("HAProxy: a pattern file, one expression to a line")
 

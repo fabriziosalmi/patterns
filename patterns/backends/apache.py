@@ -53,9 +53,9 @@ logger = logging.getLogger(__name__)
 # CRS rule N is written as ID_OFFSET + N.
 ID_OFFSET = 9_000_000
 
-# The bad-bot list (badbots.py) is written as rules too, and its ids start here: the
-# n-th entry is rule BOT_ID_OFFSET + n. The ids of a release are not those of the next:
-# the list changes every night.
+# The bad-bot list (badbots.py) is written as rules too, and its ids start here. An
+# entry keeps the id it was first given, in bot_ids.json, from one release to the next,
+# and a new entry gets the next id after the highest ever given (#108).
 BOT_ID_OFFSET = 8_000_000
 
 # The rules that refuse, what they refuse with, and what the others do.

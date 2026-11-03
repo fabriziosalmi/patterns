@@ -33,6 +33,13 @@ BOT_LIST_SOURCES = [
     "https://raw.githubusercontent.com/JayBizzle/Crawler-Detect/master/raw/Crawlers.txt",
     "https://raw.githubusercontent.com/piwik/referrer-spam-blacklist/master/spammers.txt"]
 
+# The Apache rule id of each entry of the list, ever. Committed with the rules, and
+# only added to: an id is never changed and never given to another entry (#108).
+BOT_IDS = Path(__file__).parent / "bot_ids.json"
+BOT_IDS_ABOUT = ("The Apache rule id of each entry of the bad-bot list, written by badbots.py. "
+                 "An entry keeps its id, an entry that leaves the list keeps it too, "
+                 "and a new entry gets the next id after the highest. Do not edit or remove ids.")
+
 RATE_LIMIT_DELAY = 600
 RETRY_DELAY = 5
 MAX_RETRIES = 3
@@ -218,6 +225,43 @@ def generate_nginx_conf(bots, left_out=()):
     write_to_file(path, content)
 
 
+def load_bot_ids(path: Path = None) -> dict:
+    """
+    The id each entry of the bad-bot list was given in Apache, from `BOT_IDS`.
+
+    The file only grows. An entry keeps its id for as long as the file has it, and
+    one that leaves the list stays in the file, so that its id is not given to another
+    entry if it comes back or if something else takes its place.
+    """
+    path = Path(path or BOT_IDS)
+    if not path.exists():
+        return {}
+    return dict(json.loads(path.read_text())["ids"])
+
+
+def assign_bot_ids(entries: list, registry: dict) -> list:
+    """
+    The id of each entry, adding to `registry` an id for each entry it does not have.
+
+    A new entry gets the next id after the highest one ever given, never one that an
+    entry has or had, and new entries get theirs in the order they are given here.
+
+    Returns:
+        The ids, in the order of `entries`.
+    """
+    for entry in entries:
+        if entry not in registry:
+            registry[entry] = max(registry.values(), default=BOT_ID_OFFSET) + 1
+    return [registry[entry] for entry in entries]
+
+
+def save_bot_ids(registry: dict, path: Path = None):
+    """Writes the registry to `BOT_IDS`, in the order of the ids, one entry to a line."""
+    path = Path(path or BOT_IDS)
+    ordered = dict(sorted(registry.items(), key=lambda item: item[1]))
+    path.write_text(json.dumps({"about": BOT_IDS_ABOUT, "ids": ordered}, indent=1, ensure_ascii=False) + "\n")
+
+
 def generate_apache_conf(bots, left_out=()):
     """
     Generate Apache WAF configuration for blocking bots.
@@ -240,10 +284,15 @@ def generate_apache_conf(bots, left_out=()):
             logging.warning(f"Apache: leaving out {bot!r}: {problem}")
         else:
             rules.append(expression)
-    for number, expression in enumerate(rules, 1):
+    # An exception is written by rule id, so an entry keeps the id it was given: it
+    # used to be its place in the list, and an entry added before it moved it (#108).
+    registry = load_bot_ids()
+    ids = assign_bot_ids([expression[len("(?i)"):] for expression in rules], registry)
+    for expression, rule_id in zip(rules, ids):
         content += (f'SecRule REQUEST_HEADERS:User-Agent "@rx {modsecurity_quote(expression)}" '
-                    f'"id:{BOT_ID_OFFSET + number},phase:1,t:none,deny,status:403,log,msg:\'bad bot\'"\n')
+                    f'"id:{rule_id},phase:1,t:none,deny,status:403,log,msg:\'bad bot\'"\n')
     write_to_file(path, content)
+    save_bot_ids(registry)
 
 
 def generate_traefik_conf(bots, left_out=()):

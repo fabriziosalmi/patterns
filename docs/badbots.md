@@ -16,7 +16,7 @@ A source that cannot be fetched is skipped. If none can, the script stops with a
 | Platform | File | Format |
 |----------|------|--------|
 | Nginx | `bots.conf` | `map $http_user_agent $bad_bot` |
-| Apache | `bots.conf` | One ModSecurity `SecRule` (`@rx`) per entry, each with an id of its own |
+| Apache | `bots.conf` | One ModSecurity `SecRule` (`@rx`) per entry, each with an id of its own that it keeps from one release to the next |
 | Traefik | `bots.toml` | Middleware regex replacements |
 | HAProxy | `bots.acl` | A pattern file: one regular expression to a line, for `-m reg -i -f` |
 
