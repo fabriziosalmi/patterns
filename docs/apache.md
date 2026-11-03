@@ -126,7 +126,7 @@ SecRule REQUEST_HEADERS:Host "@rx ^$" "id:9920290,phase:1,t:none,deny,status:403
 ```
 
 - **The id is 9000000 plus the CRS id.** CRS rule 920290 is rule 9920290. It cannot be the id of a CRS you have installed (900000 to 999999), and the log says which rule it was.
-- **`bots.conf` uses ids from 8000001.** They follow the order of the list, which changes every night: do not rely on one staying the same between releases.
+- **`bots.conf` uses ids from 8000001, and an entry keeps its id.** The list changes every night, but an entry has the id it was first given in every release after, so an exception written by id goes on meaning the same entry. A new entry gets the next id after the highest ever given, and the id of an entry that leaves the list is not given to another. The ids are kept in [`bot_ids.json`](https://github.com/fabriziosalmi/patterns/blob/main/bot_ids.json).
 - The `phase` is the one CRS gave the rule, and `severity` is CRS's.
 - The expression is exactly what CRS wrote between the quotes, with `(?i)` where it had one.
 
