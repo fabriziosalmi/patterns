@@ -9648,6 +9648,12 @@
                   name: 'user-agent'
                   string_match:
                     safe_regex:
+                      regex: '(?s:.*)(?i:img2dataset)(?s:.*)'
+              # bad bot
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
                       regex: '(?s:.*)(?i:imgproxy\/[0-9])(?s:.*)'
               # bad bot
               - header:
