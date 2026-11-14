@@ -186,6 +186,7 @@ CSHttp
 CSSCheck
 CakePHP
 Calculon
+Camoufox
 Canary%20Mail
 CaretNail
 CazoodleBot
@@ -487,6 +488,7 @@ HaosouSpider
 HappyApps-WebCheck
 Hardenize
 Harvest
+HatchFeed
 Hatena
 HaveInListEnricher
 Havij
@@ -566,6 +568,7 @@ Jbrofuzz
 JennyBot
 Jersey\/
 JetCar
+Jetpack by WordPress
 Jetty
 Jigsaw
 JikeSpider
@@ -728,6 +731,7 @@ Morfeus\ Fucking\ Scanner
 Morning Paper
 MovableType
 Mozlila
+Mozlila\/
 Mr.4x3
 Mr\.4x3 Powered
 Mrcgiguy
@@ -924,6 +928,7 @@ RPT-HTTPClient
 RSSMix\/
 RSSOwl
 RSSingBot
+RSiteAuditor
 Radian6
 RadioPublicImageResizer
 Railgun\/
@@ -1033,6 +1038,7 @@ Seobility
 SeobilityBot
 Seomoz
 Seznam
+Shap-User
 Shelob
 Shodan
 ShopWiki
@@ -1040,6 +1046,7 @@ Shoppimon
 ShortLinkTranslate
 Sideqik
 Siege
+Silktide
 SimplePie
 SimplyFast
 Siphon
@@ -1231,6 +1238,7 @@ WEPA
 WISENutbot
 WP Engine Install Performance API
 WP Rocket
+WP-Safe-Scanner
 WPScan
 WWW-Collector-E
 WWW-Mechanize
@@ -1381,6 +1389,7 @@ ZyBorg
 ^Aether
 ^Amazon Simple Notification Service Agent$
 ^Amazon-Route53-Health-Check-Service
+^Bun\/[0-9]
 ^COMODO DCV
 ^Calypso v\/
 ^Corax
@@ -1426,6 +1435,7 @@ ZyBorg
 ^docker\/[0-9]
 ^git\/
 ^npm\/
+^opencode(\/|$)
 ^pip\/
 ^pnpm\/
 ^symbolicator\/
@@ -1446,6 +1456,7 @@ adscanner
 adstxt-worker
 adstxt\.com
 affilimate-puppeteer
+agent-browser\/
 agentslug
 aihit
 aiohttp\/
@@ -1457,6 +1468,7 @@ allenai\.org
 allloadin
 alyze\.info
 amagit
+amazon-Quick-on-behalf-of
 amphp\/http-client
 annotate_google
 anthropic-ai
@@ -1481,11 +1493,13 @@ biNu image cacher
 biglotron
 binlar
 biz_Directory
+blackboardally
 boitho\.com-dc
 caam dot crwlr at gmail dot com
 cah\.io\.community
 catexplorador
 censys
+centuryb\.o\.t9\[at\]gmail\.com
 cf-facebook
 cg-eye
 changedetection
@@ -1581,6 +1595,7 @@ google-xrawler
 gopher
 gosquared-thumbnailer
 grabify
+grok-agent
 grokkit
 grouphigh
 grub-client
@@ -1599,6 +1614,7 @@ htmlyse
 http-get
 http-kit
 http-request\/
+http:\/\/www\.neomo\.de\/
 httpRequest
 http\.rb\/
 http_get
@@ -1770,6 +1786,7 @@ sc-downloader
 scalaj-http
 scan\.lol
 scooter
+search\.marginalia\.nu
 search\.thunderstone
 searchenginepromotionhelp
 semanticdiscovery

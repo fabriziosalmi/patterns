@@ -1056,6 +1056,12 @@
                   name: 'user-agent'
                   string_match:
                     safe_regex:
+                      regex: '(?s:.*)(?i:Camoufox)(?s:.*)'
+              # bad bot
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
                       regex: '(?s:.*)(?i:Canary%20Mail)(?s:.*)'
               # bad bot
               - header:
@@ -2862,6 +2868,12 @@
                   name: 'user-agent'
                   string_match:
                     safe_regex:
+                      regex: '(?s:.*)(?i:HatchFeed)(?s:.*)'
+              # bad bot
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
                       regex: '(?s:.*)(?i:Hatena)(?s:.*)'
               # bad bot
               - header:
@@ -3331,6 +3343,12 @@
                   string_match:
                     safe_regex:
                       regex: '(?s:.*)(?i:JetCar)(?s:.*)'
+              # bad bot
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
+                      regex: '(?s:.*)(?i:Jetpack by WordPress)(?s:.*)'
               # bad bot
               - header:
                   name: 'user-agent'
@@ -4303,6 +4321,12 @@
                   string_match:
                     safe_regex:
                       regex: '(?s:.*)(?i:Mozlila)(?s:.*)'
+              # bad bot
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
+                      regex: '(?s:.*)(?i:Mozlila\/)(?s:.*)'
               # bad bot
               - header:
                   name: 'user-agent'
@@ -5484,6 +5508,12 @@
                   name: 'user-agent'
                   string_match:
                     safe_regex:
+                      regex: '(?s:.*)(?i:RSiteAuditor)(?s:.*)'
+              # bad bot
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
                       regex: '(?s:.*)(?i:Radian6)(?s:.*)'
               # bad bot
               - header:
@@ -6138,6 +6168,12 @@
                   name: 'user-agent'
                   string_match:
                     safe_regex:
+                      regex: '(?s:.*)(?i:Shap-User)(?s:.*)'
+              # bad bot
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
                       regex: '(?s:.*)(?i:Shelob)(?s:.*)'
               # bad bot
               - header:
@@ -6175,6 +6211,12 @@
                   string_match:
                     safe_regex:
                       regex: '(?s:.*)(?i:Siege)(?s:.*)'
+              # bad bot
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
+                      regex: '(?s:.*)(?i:Silktide)(?s:.*)'
               # bad bot
               - header:
                   name: 'user-agent'
@@ -7326,6 +7368,12 @@
                   name: 'user-agent'
                   string_match:
                     safe_regex:
+                      regex: '(?s:.*)(?i:WP-Safe-Scanner)(?s:.*)'
+              # bad bot
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
                       regex: '(?s:.*)(?i:WPScan)(?s:.*)'
               # bad bot
               - header:
@@ -8226,6 +8274,12 @@
                   name: 'user-agent'
                   string_match:
                     safe_regex:
+                      regex: '(?s:.*)(?i:^Bun\/[0-9])(?s:.*)'
+              # bad bot
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
                       regex: '(?s:.*)(?i:^COMODO DCV)(?s:.*)'
               # bad bot
               - header:
@@ -8496,6 +8550,12 @@
                   name: 'user-agent'
                   string_match:
                     safe_regex:
+                      regex: '(?s:.*)(?i:^opencode(\/|$))(?s:.*)'
+              # bad bot
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
                       regex: '(?s:.*)(?i:^pip\/)(?s:.*)'
               # bad bot
               - header:
@@ -8616,6 +8676,12 @@
                   name: 'user-agent'
                   string_match:
                     safe_regex:
+                      regex: '(?s:.*)(?i:agent-browser\/)(?s:.*)'
+              # bad bot
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
                       regex: '(?s:.*)(?i:agentslug)(?s:.*)'
               # bad bot
               - header:
@@ -8677,6 +8743,12 @@
                   string_match:
                     safe_regex:
                       regex: '(?s:.*)(?i:amagit)(?s:.*)'
+              # bad bot
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
+                      regex: '(?s:.*)(?i:amazon-Quick-on-behalf-of)(?s:.*)'
               # bad bot
               - header:
                   name: 'user-agent'
@@ -8826,6 +8898,12 @@
                   name: 'user-agent'
                   string_match:
                     safe_regex:
+                      regex: '(?s:.*)(?i:blackboardally)(?s:.*)'
+              # bad bot
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
                       regex: '(?s:.*)(?i:boitho\.com-dc)(?s:.*)'
               # bad bot
               - header:
@@ -8851,6 +8929,12 @@
                   string_match:
                     safe_regex:
                       regex: '(?s:.*)(?i:censys)(?s:.*)'
+              # bad bot
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
+                      regex: '(?s:.*)(?i:centuryb\.o\.t9\[at\]gmail\.com)(?s:.*)'
               # bad bot
               - header:
                   name: 'user-agent'
@@ -9426,6 +9510,12 @@
                   name: 'user-agent'
                   string_match:
                     safe_regex:
+                      regex: '(?s:.*)(?i:grok-agent)(?s:.*)'
+              # bad bot
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
                       regex: '(?s:.*)(?i:grokkit)(?s:.*)'
               # bad bot
               - header:
@@ -9529,6 +9619,12 @@
                   string_match:
                     safe_regex:
                       regex: '(?s:.*)(?i:http-request\/)(?s:.*)'
+              # bad bot
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
+                      regex: '(?s:.*)(?i:http:\/\/www\.neomo\.de\/)(?s:.*)'
               # bad bot
               - header:
                   name: 'user-agent'
@@ -10555,6 +10651,12 @@
                   string_match:
                     safe_regex:
                       regex: '(?s:.*)(?i:scooter)(?s:.*)'
+              # bad bot
+              - header:
+                  name: 'user-agent'
+                  string_match:
+                    safe_regex:
+                      regex: '(?s:.*)(?i:search\.marginalia\.nu)(?s:.*)'
               # bad bot
               - header:
                   name: 'user-agent'

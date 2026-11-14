@@ -1871,6 +1871,23 @@
   "yourls\\.org": 8001868,
   "zauba\\.io": 8001869,
   "zgrab": 8001870,
-  "img2dataset": 8001871
+  "img2dataset": 8001871,
+  "Camoufox": 8001872,
+  "HatchFeed": 8001873,
+  "Jetpack by WordPress": 8001874,
+  "Mozlila\\/": 8001875,
+  "RSiteAuditor": 8001876,
+  "Shap-User": 8001877,
+  "Silktide": 8001878,
+  "WP-Safe-Scanner": 8001879,
+  "^Bun\\/[0-9]": 8001880,
+  "^opencode(\\/|$)": 8001881,
+  "agent-browser\\/": 8001882,
+  "amazon-Quick-on-behalf-of": 8001883,
+  "blackboardally": 8001884,
+  "centuryb\\.o\\.t9\\[at\\]gmail\\.com": 8001885,
+  "grok-agent": 8001886,
+  "http:\\/\\/www\\.neomo\\.de\\/": 8001887,
+  "search\\.marginalia\\.nu": 8001888
  }
 }
